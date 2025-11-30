@@ -17,6 +17,7 @@ function ProfilePageContent() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [userClass, setUserClass] = useState('');
+  const [phone, setPhone] = useState('');
   const [, setUserClasses] = useState<string[]>([]);
   const [classNames, setClassNames] = useState<string[]>([]);
   const [photoURL, setPhotoURL] = useState('');
@@ -25,6 +26,8 @@ function ProfilePageContent() {
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef(null);
   const [learningData, setLearningData] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
@@ -42,6 +45,7 @@ function ProfilePageContent() {
         setDisplayName(data.displayName || '');
         setEmail(data.email || '');
         setUserClass(data.class || '');
+        setPhone(data.phone || '');
         setUserClasses(data.classes || []);
         setPhotoURL(data.photoURL || '');
         
@@ -331,6 +335,93 @@ function ProfilePageContent() {
     router.push('/forgot-password');
   };
 
+  const formatPhoneNumber = (value: string): string => {
+    // Usuń wszystkie znaki niebędące cyframi lub +
+    const cleaned = value.replace(/[^\d+]/g, '');
+    
+    // Jeśli zaczyna się od +, zostaw jak jest
+    if (cleaned.startsWith('+')) {
+      return cleaned;
+    }
+    
+    // Jeśli zaczyna się od 0, zamień na +48
+    if (cleaned.startsWith('0')) {
+      return '+48' + cleaned.substring(1);
+    }
+    
+    // Jeśli zaczyna się od 48, dodaj +
+    if (cleaned.startsWith('48')) {
+      return '+' + cleaned;
+    }
+    
+    // W przeciwnym razie dodaj +48
+    return '+48' + cleaned;
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Pozwól na wprowadzanie cyfr, spacji, + i -
+    const cleaned = value.replace(/[^\d+\s-]/g, '');
+    setPhone(cleaned);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    
+    // Walidacja numeru telefonu (jeśli został wprowadzony)
+    let formattedPhone = phone.trim();
+    if (formattedPhone) {
+      formattedPhone = formatPhoneNumber(formattedPhone);
+      
+      // Sprawdź czy numer jest poprawny (min. 9 cyfr po +48)
+      const phoneRegex = /^\+48\d{9}$/;
+      if (!phoneRegex.test(formattedPhone)) {
+        setSaveMessage({ 
+          type: 'error', 
+          text: 'Nieprawidłowy format numeru telefonu. Użyj formatu: +48123456789 lub 123456789' 
+        });
+        setTimeout(() => setSaveMessage(null), 5000);
+        return;
+      }
+    }
+    
+    try {
+      setSaveMessage(null);
+      const updateData: any = {
+        displayName,
+        class: userClass
+      };
+      
+      // Dodaj telefon tylko jeśli został wprowadzony
+      if (formattedPhone) {
+        updateData.phone = formattedPhone;
+      } else {
+        // Jeśli pole jest puste, usuń telefon z bazy
+        updateData.phone = '';
+      }
+      
+      await updateDoc(doc(db, 'users', user.uid), updateData);
+      
+      // Zaktualizuj stan telefonu
+      setPhone(formattedPhone);
+      
+      // Pokaż komunikat o sukcesie
+      setSaveMessage({ 
+        type: 'success', 
+        text: 'Profil został zaktualizowany pomyślnie!' 
+      });
+      setIsEditing(false);
+      setTimeout(() => setSaveMessage(null), 5000);
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setSaveMessage({ 
+        type: 'error', 
+        text: 'Błąd podczas aktualizacji profilu: ' + (error instanceof Error ? error.message : 'Nieznany błąd')
+      });
+      setTimeout(() => setSaveMessage(null), 5000);
+    }
+  };
+
 
 
   return (
@@ -547,6 +638,128 @@ function ProfilePageContent() {
                     Aktywne
                   </p>
                 </div>
+
+                {/* Karta - Numer telefonu */}
+                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                      </svg>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Numer telefonu</h4>
+                  </div>
+                  <p className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
+                    {phone || 'Nie podano'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Sekcja edycji profilu */}
+              <div className="mt-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">
+                    Edycja profilu
+                  </h3>
+                  <button
+                    onClick={() => setIsEditing(!isEditing)}
+                    className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] transition-colors font-medium"
+                  >
+                    {isEditing ? 'Anuluj edycję' : 'Edytuj profil'}
+                  </button>
+                </div>
+
+                {isEditing && (
+                  <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Imię i nazwisko
+                        </label>
+                        <input
+                          type="text"
+                          value={displayName}
+                          onChange={(e) => setDisplayName(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
+                          placeholder="Wprowadź imię i nazwisko"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Email
+                        </label>
+                        <input
+                          type="email"
+                          value={email}
+                          disabled
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500"
+                          placeholder="Email (nie można zmienić)"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Klasa
+                        </label>
+                        <input
+                          type="text"
+                          value={userClass}
+                          onChange={(e) => setUserClass(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
+                          placeholder="Wprowadź klasę"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Numer telefonu <span className="text-gray-500 text-xs">(opcjonalnie)</span>
+                        </label>
+                        <input
+                          type="tel"
+                          value={phone}
+                          onChange={handlePhoneChange}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
+                          placeholder="+48123456789 lub 123456789"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Numer telefonu jest używany do wysyłania powiadomień SMS o nowych wydarzeniach w kalendarzu.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Komunikat o zapisaniu */}
+                    {saveMessage && (
+                      <div className={`mt-4 p-4 rounded-lg ${
+                        saveMessage.type === 'success' 
+                          ? 'bg-green-50 border border-green-200 text-green-700' 
+                          : 'bg-red-50 border border-red-200 text-red-700'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          {saveMessage.type === 'success' ? (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          ) : (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          )}
+                          <span>{saveMessage.text}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-6">
+                      <button
+                        onClick={handleSaveProfile}
+                        className="bg-[#4067EC] text-white px-6 py-2 rounded-lg hover:bg-[#3050b3] transition-colors font-medium"
+                      >
+                        Zapisz zmiany
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Sekcja z 3 najwyższymi odznakami */}

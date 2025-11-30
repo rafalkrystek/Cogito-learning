@@ -949,14 +949,14 @@ function QuizTakingContent() {
                 <div className={`flex items-center space-x-2 text-sm font-medium ${
                   isTimeRunningLow ? 'text-red-600 animate-pulse' : 'text-gray-600'
                 }`}>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="font-mono">{formatTime(timeLeft)}</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="font-mono">{formatTime(timeLeft)}</span>
                   {isTimeRunningLow && (
                     <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">Czas się kończy!</span>
                   )}
-                </div>
+              </div>
               )}
               <div className="text-sm text-gray-600">
                 {getAnsweredCount()} / {quiz.questions.length} odpowiedzi

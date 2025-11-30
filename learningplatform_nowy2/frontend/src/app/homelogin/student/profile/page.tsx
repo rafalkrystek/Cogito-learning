@@ -13,12 +13,14 @@ function StudentProfileContent() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [userClass, setUserClass] = useState('');
+  const [phone, setPhone] = useState('');
   const [photoURL, setPhotoURL] = useState('');
   const [loading, setLoading] = useState(true);
   const [hovered, setHovered] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -31,6 +33,7 @@ function StudentProfileContent() {
         setDisplayName(data.displayName || '');
         setEmail(data.email || '');
         setUserClass(data.class || '');
+        setPhone(data.phone || '');
         setPhotoURL(data.photoURL || '');
       }
       setLoading(false);
@@ -105,20 +108,89 @@ function StudentProfileContent() {
     }
   };
 
+  const formatPhoneNumber = (value: string): string => {
+    // Usuń wszystkie znaki niebędące cyframi lub +
+    const cleaned = value.replace(/[^\d+]/g, '');
+    
+    // Jeśli zaczyna się od +, zostaw jak jest
+    if (cleaned.startsWith('+')) {
+      return cleaned;
+    }
+    
+    // Jeśli zaczyna się od 0, zamień na +48
+    if (cleaned.startsWith('0')) {
+      return '+48' + cleaned.substring(1);
+    }
+    
+    // Jeśli zaczyna się od 48, dodaj +
+    if (cleaned.startsWith('48')) {
+      return '+' + cleaned;
+    }
+    
+    // W przeciwnym razie dodaj +48
+    return '+48' + cleaned;
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Pozwól na wprowadzanie cyfr, spacji, + i -
+    const cleaned = value.replace(/[^\d+\s-]/g, '');
+    setPhone(cleaned);
+  };
+
   const handleSaveProfile = async () => {
     if (!user) return;
     
+    // Walidacja numeru telefonu (jeśli został wprowadzony)
+    let formattedPhone = phone.trim();
+    if (formattedPhone) {
+      formattedPhone = formatPhoneNumber(formattedPhone);
+      
+      // Sprawdź czy numer jest poprawny (min. 9 cyfr po +48)
+      const phoneRegex = /^\+48\d{9}$/;
+      if (!phoneRegex.test(formattedPhone)) {
+        setSaveMessage({ 
+          type: 'error', 
+          text: 'Nieprawidłowy format numeru telefonu. Użyj formatu: +48123456789 lub 123456789' 
+        });
+        setTimeout(() => setSaveMessage(null), 5000);
+        return;
+      }
+    }
+    
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
+      setSaveMessage(null);
+      const updateData: any = {
         displayName,
         class: userClass
-      });
+      };
+      
+      // Dodaj telefon tylko jeśli został wprowadzony
+      if (formattedPhone) {
+        updateData.phone = formattedPhone;
+      } else {
+        // Jeśli pole jest puste, usuń telefon z bazy
+        updateData.phone = '';
+      }
+      
+      await updateDoc(doc(db, 'users', user.uid), updateData);
+      
+      // Zaktualizuj stan telefonu
+      setPhone(formattedPhone);
       
       // Pokaż komunikat o sukcesie
-      alert('Profil został zaktualizowany!');
+      setSaveMessage({ 
+        type: 'success', 
+        text: 'Profil został zaktualizowany pomyślnie!' 
+      });
+      setTimeout(() => setSaveMessage(null), 5000);
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('Błąd podczas aktualizacji profilu');
+      setSaveMessage({ 
+        type: 'error', 
+        text: 'Błąd podczas aktualizacji profilu: ' + (error instanceof Error ? error.message : 'Nieznany błąd')
+      });
+      setTimeout(() => setSaveMessage(null), 5000);
     }
   };
 
@@ -279,7 +351,45 @@ function StudentProfileContent() {
                 placeholder="Wprowadź klasę"
               />
             </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Numer telefonu <span className="text-gray-500 text-xs">(opcjonalnie)</span>
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={handlePhoneChange}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
+                placeholder="+48123456789 lub 123456789"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Numer telefonu jest używany do wysyłania powiadomień SMS o nowych wydarzeniach w kalendarzu.
+              </p>
+            </div>
           </div>
+          
+          {/* Komunikat o zapisaniu */}
+          {saveMessage && (
+            <div className={`mt-4 p-4 rounded-lg ${
+              saveMessage.type === 'success' 
+                ? 'bg-green-50 border border-green-200 text-green-700' 
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              <div className="flex items-center gap-2">
+                {saveMessage.type === 'success' ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                )}
+                <span>{saveMessage.text}</span>
+              </div>
+            </div>
+          )}
           
           <div className="mt-6">
             <button

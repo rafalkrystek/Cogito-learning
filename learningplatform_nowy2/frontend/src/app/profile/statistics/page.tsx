@@ -774,27 +774,6 @@ export default function StatisticsPage() {
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8 border border-white/20 dark:border-gray-700 mt-8">
               <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8 text-center">Średnia Ocen</h2>
               
-              {/* Debug info */}
-              {process.env.NODE_ENV === 'development' && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
-                  <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">Debug Info:</h3>
-                  <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                    Ładowanie ocen: {gradesLoading ? 'TAK' : 'NIE'}<br/>
-                    Liczba ocen: {grades.length}<br/>
-                    Użytkownik: {user?.uid}<br/>
-                    Email: {user?.email}
-                  </p>
-                  {grades.length > 0 && (
-                    <details className="mt-2">
-                      <summary className="text-sm text-yellow-700 dark:text-yellow-300 cursor-pointer">Pokaż szczegóły ocen</summary>
-                      <pre className="text-xs text-yellow-600 dark:text-yellow-400 mt-2 bg-yellow-100 dark:bg-yellow-900/50 p-2 rounded overflow-auto max-h-32">
-                        {JSON.stringify(grades, null, 2)}
-                      </pre>
-                    </details>
-                  )}
-                </div>
-              )}
-              
               {/* Główny wskaźnik średniej */}
               <div className="flex justify-center mb-8">
                 <div className="relative w-48 h-48">
@@ -981,7 +960,7 @@ export default function StatisticsPage() {
       </div>
     </div>
   );
-}
+} 
 
 // Interfejs dla odznaki
 interface Badge {

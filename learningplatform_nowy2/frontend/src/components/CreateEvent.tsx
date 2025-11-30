@@ -1,12 +1,14 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, getDoc, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 interface Student {
   uid: string;
   displayName: string;
   role?: string;
+  email?: string;
+  phone?: string;
 }
 
 const CreateEvent: React.FC = () => {
@@ -29,7 +31,16 @@ const CreateEvent: React.FC = () => {
       const usersCollection = collection(db, 'users');
       const usersSnapshot = await getDocs(usersCollection);
       const studentsList = usersSnapshot.docs
-        .map(doc => ({ uid: doc.id, ...(doc.data() as Record<string, unknown>) } as Student))
+        .map(doc => {
+          const data = doc.data() as Record<string, unknown>;
+          return {
+            uid: doc.id,
+            displayName: data.displayName as string || '',
+            role: data.role as string,
+            email: data.email as string || '',
+            phone: data.phone as string || ''
+          } as Student;
+        })
         .filter(user => user?.role === 'student');
       setStudents(studentsList);
     };
@@ -71,7 +82,12 @@ const CreateEvent: React.FC = () => {
       return;
     }
     try {
-      console.log('Creating event with students:', selectedStudents);
+      console.log('🚀 ========== TWORZENIE WYDARZENIA ==========');
+      console.log('📝 Tytuł:', title);
+      console.log('📅 Data:', date);
+      console.log('⏰ Godzina:', `${startTime} - ${endTime}`);
+      console.log('👥 Wybrani uczniowie (ID):', selectedStudents);
+      console.log('👥 Liczba wybranych uczniów:', selectedStudents.length);
       
       if (selectedStudents.length === 0) {
         setError('Musisz wybrać przynajmniej jednego ucznia!');
@@ -80,6 +96,7 @@ const CreateEvent: React.FC = () => {
       }
 
       // Utwórz wydarzenie
+      console.log('💾 Zapisuję wydarzenie do bazy danych...');
       const eventRef = await addDoc(collection(db, 'events'), {
         title,
         description,
@@ -90,7 +107,50 @@ const CreateEvent: React.FC = () => {
         assignedTo: selectedStudents,
       });
 
-      console.log('Event created:', eventRef.id);
+      console.log('✅ Wydarzenie utworzone z ID:', eventRef.id);
+
+      // Pobierz dane uczniów (email i telefon) do wysyłki powiadomień
+      console.log('📥 Pobieram dane uczniów z bazy danych...');
+      const studentDataPromises = selectedStudents.map(async (studentId) => {
+        try {
+          console.log(`  🔍 Pobieram dane dla ucznia ID: ${studentId}`);
+          const studentDoc = await getDoc(doc(db, 'users', studentId));
+          if (studentDoc.exists()) {
+            const studentData = studentDoc.data();
+            const studentInfo = {
+              uid: studentId,
+              email: studentData.email || '',
+              phone: studentData.phone || '',
+              displayName: studentData.displayName || 'Uczeń'
+            };
+            console.log(`  ✅ Dane ucznia ${studentId}:`, {
+              name: studentInfo.displayName,
+              email: studentInfo.email ? 'TAK' : 'BRAK',
+              phone: studentInfo.phone ? studentInfo.phone : 'BRAK'
+            });
+            return studentInfo;
+          }
+          console.log(`  ⚠️ Dokument ucznia ${studentId} nie istnieje w bazie`);
+          return { uid: studentId, email: '', phone: '', displayName: 'Uczeń' };
+        } catch (error) {
+          console.error(`  ❌ Błąd pobierania danych ucznia ${studentId}:`, error);
+          return { uid: studentId, email: '', phone: '', displayName: 'Uczeń' };
+        }
+      });
+
+      const studentsData = await Promise.all(studentDataPromises);
+      
+      // Loguj dane uczniów dla debugowania
+      console.log('📋 ========== PODSUMOWANIE DANYCH UCZNIÓW ==========');
+      studentsData.forEach((student, index) => {
+        console.log(`  ${index + 1}. ${student.displayName} (${student.uid}):`);
+        console.log(`     📧 Email: ${student.email || 'BRAK'}`);
+        console.log(`     📱 Telefon: ${student.phone || 'BRAK'}`);
+      });
+      
+      const studentsWithEmail = studentsData.filter(s => s.email).length;
+      const studentsWithPhoneCount = studentsData.filter(s => s.phone).length;
+      console.log(`📊 Statystyki: ${studentsWithEmail} z emailem, ${studentsWithPhoneCount} z numerem telefonu`);
 
       // Utwórz powiadomienia dla każdego przypisanego ucznia
       const notificationPromises = selectedStudents.map(studentId => {
@@ -111,8 +171,173 @@ const CreateEvent: React.FC = () => {
 
       await Promise.all(notificationPromises);
 
-      console.log(`Created ${notificationPromises.length} notifications`);
-      setSuccess(`Wydarzenie utworzone i wysłano ${selectedStudents.length} powiadomień!`);
+      // Formatuj datę i godzinę dla wiadomości
+      const formattedDate = new Date(date).toLocaleDateString('pl-PL', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      // Wysyłaj emaile i SMSy do uczniów
+      console.log('📧 ========== WYSYŁANIE EMAILI I SMS ==========');
+      let emailsSent = 0;
+      let smsSent = 0;
+      let emailErrors = 0;
+      let smsErrors = 0;
+
+      const emailPromises = studentsData
+        .filter(student => student.email)
+        .map(async (student) => {
+          console.log(`📧 Przetwarzanie emaila dla: ${student.displayName} (${student.email})`);
+          try {
+            const emailSubject = `Nowe wydarzenie: ${title}`;
+            const emailBody = `
+Witaj ${student.displayName},
+
+Masz nowe wydarzenie w kalendarzu:
+
+Tytuł: ${title}
+${description ? `Opis: ${description}` : ''}
+Data: ${formattedDate}
+Godzina: ${startTime} - ${endTime}
+
+Zaloguj się do platformy, aby zobaczyć szczegóły:
+${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/homelogin/student/calendar
+
+---
+Platforma E-Learning
+            `.trim();
+
+            const formData = new FormData();
+            formData.append('to', student.email);
+            formData.append('subject', emailSubject);
+            formData.append('body', emailBody);
+
+            const response = await fetch('/api/send-email', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (response.ok) {
+              emailsSent++;
+              console.log(`  ✅ Email wysłany do ${student.email}`);
+            } else {
+              emailErrors++;
+              const errorData = await response.json().catch(() => ({}));
+              console.error(`  ❌ Błąd wysyłania emaila do ${student.email}:`, errorData);
+            }
+          } catch (error) {
+            emailErrors++;
+            console.error(`  ❌ Błąd wysyłania emaila do ${student.email}:`, error);
+          }
+        });
+
+      const studentsWithPhone = studentsData.filter(s => s.phone);
+      console.log(`📱 Uczniowie z numerem telefonu: ${studentsWithPhone.length}`);
+      
+      if (studentsWithPhone.length === 0) {
+        console.log('⚠️ BRAK UCZNIÓW Z NUMEREM TELEFONU - SMS nie będą wysyłane');
+      }
+
+      const smsPromises = studentsWithPhone
+        .map(async (student) => {
+          try {
+            console.log(`📱 ========== PRZETWARZANIE SMS ==========`);
+            console.log(`📱 Uczeń: ${student.displayName} (${student.uid})`);
+            console.log(`📱 Oryginalny numer: ${student.phone}`);
+            
+            // Formatuj numer telefonu (usuń spacje, dodaj +48 jeśli brak)
+            let phoneNumber = student.phone.replace(/\s/g, '');
+            if (!phoneNumber.startsWith('+')) {
+              if (phoneNumber.startsWith('0')) {
+                phoneNumber = '+48' + phoneNumber.substring(1);
+              } else {
+                phoneNumber = '+48' + phoneNumber;
+              }
+            }
+            
+            console.log(`📱 Sformatowany numer: ${phoneNumber}`);
+
+            const smsMessage = `Nowe wydarzenie: ${title}\nData: ${formattedDate}\nGodzina: ${startTime}-${endTime}\n\nZaloguj się do platformy, aby zobaczyć szczegóły.`;
+            
+            console.log(`📱 Treść SMS:`, smsMessage);
+            console.log(`📱 Wywołuję endpoint /api/send-sms...`);
+
+            const response = await fetch('/api/send-sms', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                to: phoneNumber,
+                message: smsMessage
+              }),
+            });
+
+            console.log(`📱 Status odpowiedzi: ${response.status} ${response.statusText}`);
+            
+            const responseData = await response.json();
+            console.log(`📱 Odpowiedź z API:`, responseData);
+
+            if (response.ok) {
+              smsSent++;
+              console.log(`✅ SMS wysłany pomyślnie do ${phoneNumber}`);
+              console.log(`   Message SID: ${responseData.messageId || 'brak'}`);
+              console.log(`   Status: ${responseData.status || 'brak'}`);
+            } else {
+              smsErrors++;
+              console.error(`❌ Błąd wysyłania SMS do ${phoneNumber}:`);
+              console.error(`   Status: ${response.status}`);
+              console.error(`   Błąd: ${responseData.error || 'Nieznany błąd'}`);
+              if (responseData.details) {
+                console.error(`   Szczegóły: ${responseData.details}`);
+              }
+            }
+          } catch (error) {
+            smsErrors++;
+            console.error(`❌ Błąd podczas wysyłania SMS do ${student.phone}:`);
+            if (error instanceof Error) {
+              console.error(`   Typ błędu: ${error.name}`);
+              console.error(`   Wiadomość: ${error.message}`);
+              console.error(`   Stack: ${error.stack}`);
+            } else {
+              console.error(`   Błąd:`, error);
+            }
+          }
+        });
+
+      // Wykonaj wszystkie wysyłki równolegle
+      console.log('⏳ Wykonuję wszystkie wysyłki równolegle...');
+      await Promise.all([...emailPromises, ...smsPromises]);
+
+      console.log('📊 ========== PODSUMOWANIE WYSYŁKI ==========');
+      console.log(`📊 Powiadomienia w systemie: ${notificationPromises.length}`);
+      console.log(`📧 Emails: ${emailsSent} wysłanych, ${emailErrors} błędów`);
+      console.log(`📱 SMS: ${smsSent} wysłanych, ${smsErrors} błędów`);
+      console.log(`📱 Uczniowie z numerem telefonu: ${studentsWithPhone.length}`);
+      
+      // Sprawdź czy są uczniowie z numerami telefonu, ale SMS nie zostały wysłane
+      if (studentsWithPhone.length > 0 && smsSent === 0) {
+        console.error('❌ ========== BŁĄD: SMS NIE ZOSTAŁY WYSŁANE ==========');
+        console.error(`❌ ${studentsWithPhone.length} uczniów ma numer telefonu, ale żaden SMS nie został wysłany.`);
+        console.error('❌ Możliwe przyczyny:');
+        console.error('   1. Brak konfiguracji Twilio w pliku .env.local');
+        console.error('   2. Nieprawidłowe dane Twilio (Account SID, Auth Token, Phone Number)');
+        console.error('   3. Serwer nie został uruchomiony ponownie po dodaniu zmiennych');
+        console.error('   4. Błąd w endpoint /api/send-sms');
+        console.error('   5. Brak środków na koncie Twilio');
+        console.error('   6. Numer telefonu nie jest zweryfikowany (wersja trial)');
+        
+        setError(`Wydarzenie utworzone, ale SMS nie zostały wysłane (${smsErrors} błędów). Sprawdź konfigurację Twilio w pliku .env.local. Otwórz konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
+      } else if (smsErrors > 0) {
+        setError(`Wydarzenie utworzone, ale wystąpiły błędy podczas wysyłania SMS (${smsErrors} błędów). Sprawdź konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
+      } else {
+        const successMessage = `Wydarzenie utworzone! Wysłano ${notificationPromises.length} powiadomień${emailsSent > 0 ? `, ${emailsSent} emaili` : ''}${smsSent > 0 ? `, ${smsSent} SMSów` : ''}.`;
+        setSuccess(successMessage);
+      }
+      
+      console.log('✅ ========== KONIEC TWORZENIA WYDARZENIA ==========');
       setTitle('');
       setDescription('');
       setDate('');

@@ -560,7 +560,14 @@ const Calendar: React.FC = () => {
     
     setQuickLoading(true);
     try {
-      await addDoc(collection(db, 'events'), {
+      console.log('🚀 ========== TWORZENIE WYDARZENIA (QUICK) ==========');
+      console.log('📝 Tytuł:', quickTitle);
+      console.log('📅 Data:', quickEventDate);
+      console.log('⏰ Godzina:', `${quickStartTime} - ${quickEndTime}`);
+      console.log('👥 Wybrani uczniowie (ID):', quickSelectedStudents);
+      console.log('👥 Liczba wybranych uczniów:', quickSelectedStudents.length);
+      
+      const eventRef = await addDoc(collection(db, 'events'), {
         title: quickTitle,
         description: quickDescription,
         date: quickEventDate,
@@ -570,6 +577,8 @@ const Calendar: React.FC = () => {
         assignedTo: quickSelectedStudents.length > 0 ? quickSelectedStudents : [],
         students: quickSelectedStudents.length > 0 ? quickSelectedStudents : [],
       });
+      
+      console.log('✅ Wydarzenie utworzone z ID:', eventRef.id);
       
       // Utwórz powiadomienia dla wybranych uczniów
       if (quickSelectedStudents.length > 0) {
@@ -589,6 +598,9 @@ const Calendar: React.FC = () => {
         await Promise.all(notificationPromises);
       }
       
+      // Cloud Function automatycznie wyśle SMS i email po utworzeniu wydarzenia
+      // (trigger: onDocumentCreated w kolekcji 'events')
+      
       // Odśwież listę wydarzeń
       const eventsCollection = collection(db, 'events');
       const eventsSnapshot = await getDocs(eventsCollection);
@@ -604,12 +616,11 @@ const Calendar: React.FC = () => {
       setQuickEventDate('');
       setQuickSelectedStudents([]);
       
-      alert(quickSelectedStudents.length > 0 
-        ? `Wydarzenie utworzone i wysłano ${quickSelectedStudents.length} powiadomień!`
-        : 'Wydarzenie utworzone!');
+      // Cloud Function automatycznie wyśle SMS i email
+      alert(`Wydarzenie utworzone! Powiadomienia SMS i email zostaną wysłane automatycznie przez Firebase Cloud Functions.`);
     } catch (err) {
+      console.error('❌ Błąd podczas tworzenia wydarzenia:', err);
       alert('Błąd podczas tworzenia wydarzenia');
-      console.error(err);
     } finally {
       setQuickLoading(false);
     }
