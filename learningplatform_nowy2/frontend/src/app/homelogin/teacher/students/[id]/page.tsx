@@ -10,13 +10,11 @@ import {
   Mail, 
   Phone, 
   MapPin, 
-  Calendar, 
   Star, 
   User,
   BookOpen,
   Plus,
   GraduationCap,
-  Award,
   TrendingUp,
   Activity,
   Target,
@@ -51,13 +49,6 @@ interface TeacherNote {
   teacherEmail: string;
   note: string;
   createdAt: any;
-}
-
-interface Grade {
-  subject: string;
-  date: string;
-  grade: number;
-  type: string;
 }
 
 export default function StudentProfilePage() {

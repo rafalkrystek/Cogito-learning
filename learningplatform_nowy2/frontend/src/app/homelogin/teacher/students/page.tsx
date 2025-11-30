@@ -76,7 +76,7 @@ export default function StudentsPage() {
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
   const [showClassSelection, setShowClassSelection] = useState(true);
   const selectedClassRef = useRef<Class | null>(null);
-  const fetchClassesCalledRef = useRef(false);
+  const fetchClassesCalledRef = useRef<string | null>(null);
   const fetchStudentsCalledRef = useRef<string | null>(null);
 
   // 🆕 DEBUG - loguj zmiany stanu (tylko raz na zmianę, nie na każdy render)
@@ -102,7 +102,7 @@ export default function StudentsPage() {
     
     // Zapobiegaj wielokrotnemu wywoływaniu - sprawdź PRZED ustawieniem flagi
     const callId = `${user.uid}-${Date.now()}`;
-    if (fetchClassesCalledRef.current) {
+    if (fetchClassesCalledRef.current !== null) {
       console.log('⚠️ fetchClasses - już wywołane, pomijam. Current flag:', fetchClassesCalledRef.current);
       return;
     }
@@ -237,7 +237,7 @@ export default function StudentsPage() {
       console.error('❌ Error fetching classes:', error);
       console.error('❌ Error details:', error);
       setError(`Wystąpił błąd podczas pobierania klas: ${error instanceof Error ? error.message : String(error)}`);
-      fetchClassesCalledRef.current = false; // Resetuj flagę w przypadku błędu
+      fetchClassesCalledRef.current = null; // Resetuj flagę w przypadku błędu
     } finally {
       // Ustaw loading na false po zakończeniu fetchClasses
       setLoading(false);
@@ -245,7 +245,7 @@ export default function StudentsPage() {
       
       // Resetuj flagę po zakończeniu (po krótkim opóźnieniu, aby uniknąć race condition)
       setTimeout(() => {
-        fetchClassesCalledRef.current = false;
+        fetchClassesCalledRef.current = null;
         console.log('🔄 fetchClasses - resetuję flagę po zakończeniu');
       }, 1000);
     }
@@ -434,7 +434,7 @@ export default function StudentsPage() {
     if (user && user.uid) {
       console.log('🔍 useEffect - user changed, wywołuję fetchClasses, fetchAllStudents');
       // Resetuj flagi przy zmianie użytkownika
-      fetchClassesCalledRef.current = false;
+      fetchClassesCalledRef.current = null;
       fetchStudentsCalledRef.current = null;
       console.log('🔄 useEffect - zresetowano flagi');
       
@@ -880,10 +880,10 @@ export default function StudentsPage() {
                           console.error('❌ Błąd w handleClassSelect:', error);
                         }
                       }}
-                      onMouseDown={(e) => {
+                      onMouseDown={() => {
                         console.log('🖱️ onMouseDown - karta klasy:', classItem.name);
                       }}
-                      onMouseUp={(e) => {
+                      onMouseUp={() => {
                         console.log('🖱️ onMouseUp - karta klasy:', classItem.name);
                       }}
                       className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden group cursor-pointer hover:border-blue-300"

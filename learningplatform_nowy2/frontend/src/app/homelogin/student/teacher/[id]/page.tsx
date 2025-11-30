@@ -2,15 +2,13 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, getDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { 
   ArrowLeft, 
   Mail, 
   Phone, 
   BookOpen, 
-  Award, 
-  Calendar,
   AlertCircle,
   Trophy
 } from 'lucide-react';
@@ -198,11 +196,10 @@ export default function TeacherProfilePage() {
       
       // Pobierz dodatkowe dane dla odznak
       let totalLessons = 0;
-      let totalQuizzes = 0;
       let totalGrades = 0;
       let activeDays = 0;
       
-      // Oblicz liczbę lekcji i quizów
+      // Oblicz liczbę lekcji
       coursesMap.forEach((course: any) => {
         if (course.sections && Array.isArray(course.sections)) {
           course.sections.forEach((section: any) => {
@@ -211,22 +208,9 @@ export default function TeacherProfilePage() {
             } else if (section.contents && section.contents.length > 0) {
               totalLessons += 1;
             }
-            if (section.quizId) {
-              totalQuizzes += 1;
-            }
           });
         }
       });
-      
-      // Pobierz liczbę quizów z kolekcji quizzes
-      try {
-        const quizzesCollection = collection(db, 'quizzes');
-        const quizzesQuery = query(quizzesCollection, where('createdBy', '==', teacherId));
-        const quizzesSnapshot = await getDocs(quizzesQuery);
-        totalQuizzes = Math.max(totalQuizzes, quizzesSnapshot.docs.length);
-      } catch (error) {
-        console.error('Błąd podczas pobierania quizów:', error);
-      }
       
       // Pobierz liczbę wystawionych ocen
       try {

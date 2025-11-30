@@ -10,13 +10,6 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
-interface Achievement {
-  id: string;
-  title: string;
-  description: string;
-  date: string;
-  icon: string;
-}
 
 interface Badge {
   id: string;
@@ -184,7 +177,6 @@ export default function TeacherProfilePage() {
     totalStudents: 0,
     averageRating: 0,
     totalLessons: 0,
-    totalQuizzes: 0,
     totalGrades: 0,
     activeDays: 0
   });
@@ -426,7 +418,6 @@ export default function TeacherProfilePage() {
       
       // 5. Oblicz liczbę lekcji i materiałów
       let totalLessons = 0;
-      let totalQuizzes = 0;
       courses.forEach((course: any) => {
         if (course.sections && Array.isArray(course.sections)) {
           course.sections.forEach((section: any) => {
@@ -435,24 +426,11 @@ export default function TeacherProfilePage() {
             } else if (section.contents && section.contents.length > 0) {
               totalLessons += 1;
             }
-            if (section.quizId) {
-              totalQuizzes += 1;
-            }
           });
         }
       });
       
-      // 6. Pobierz liczbę quizów z kolekcji quizzes
-      try {
-        const quizzesCollection = collection(db, 'quizzes');
-        const quizzesQuery = query(quizzesCollection, where('createdBy', '==', user.uid));
-        const quizzesSnapshot = await getDocs(quizzesQuery);
-        totalQuizzes = Math.max(totalQuizzes, quizzesSnapshot.docs.length);
-      } catch (error) {
-        console.error('Błąd podczas pobierania quizów:', error);
-      }
-      
-      // 7. Pobierz liczbę wystawionych ocen
+      // 6. Pobierz liczbę wystawionych ocen
       let totalGrades = 0;
       try {
         const gradesCollection = collection(db, 'grades');
@@ -492,7 +470,6 @@ export default function TeacherProfilePage() {
         totalStudents,
         averageRating,
         totalLessons,
-        totalQuizzes,
         totalGrades,
         activeDays
       });
@@ -526,7 +503,7 @@ export default function TeacherProfilePage() {
   // Oblicz odznaki na podstawie statystyk nauczyciela
   useEffect(() => {
     const calculateBadges = () => {
-      const { totalCourses, totalStudents, averageRating, totalLessons, totalQuizzes, totalGrades, activeDays } = teacherStats;
+      const { totalCourses, totalStudents, averageRating, totalLessons, totalGrades, activeDays } = teacherStats;
 
       const calculateLevel = (value: number, thresholds: number[]): number => {
         for (let i = thresholds.length - 1; i >= 0; i--) {
