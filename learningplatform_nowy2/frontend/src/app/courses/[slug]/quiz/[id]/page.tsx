@@ -47,8 +47,9 @@ function QuizTakingContent() {
   const [error, setError] = useState<string | null>(null);
   const [attemptsCount, setAttemptsCount] = useState(0);
   const [maxAttemptsReached, setMaxAttemptsReached] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(1800); // 30 minutes in seconds
+  const [timeLeft, setTimeLeft] = useState<number | null>(null); // Will be set when quiz loads
   const [quizStarted, setQuizStarted] = useState(false);
+  const [timeExpired, setTimeExpired] = useState(false);
 
   // Check if params are available
   useEffect(() => {
@@ -385,6 +386,7 @@ function QuizTakingContent() {
         course_title: data.course_title || '',
         questions,
         max_attempts: data.max_attempts || 1,
+        time_limit: data.time_limit || undefined,
         created_at: data.created_at || new Date().toISOString(),
         updated_at: data.updated_at || new Date().toISOString(),
         created_by: data.created_by || null
@@ -392,6 +394,13 @@ function QuizTakingContent() {
       
       console.log('Final quiz data:', quizData);
       setQuiz(quizData);
+      
+      // Initialize timer based on quiz time_limit
+      if (quizData.time_limit) {
+        setTimeLeft(quizData.time_limit * 60); // Convert minutes to seconds
+      } else {
+        setTimeLeft(null); // No time limit
+      }
       
       // Check attempts
       if (user) {
@@ -428,12 +437,15 @@ function QuizTakingContent() {
 
   // Timer functionality
   useEffect(() => {
-    if (!quizStarted || timeLeft <= 0) return;
+    // Don't start timer if there's no time limit or quiz is already submitted
+    if (!quizStarted || timeLeft === null || timeLeft <= 0 || quizSubmitted || timeExpired) return;
     
     const timer = setInterval(() => {
       setTimeLeft(prev => {
+        if (prev === null) return null;
         if (prev <= 1) {
           // Time's up - auto-submit quiz
+          setTimeExpired(true);
           handleSubmit();
           return 0;
         }
@@ -442,14 +454,18 @@ function QuizTakingContent() {
     }, 1000);
     
     return () => clearInterval(timer);
-  }, [quizStarted, timeLeft, handleSubmit]);
+  }, [quizStarted, timeLeft, quizSubmitted, timeExpired, handleSubmit]);
   
   // Format time for display
-  const formatTime = (seconds: number) => {
+  const formatTime = (seconds: number | null) => {
+    if (seconds === null) return 'Bez limitu';
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
+  
+  // Check if time is running low (less than 1 minute)
+  const isTimeRunningLow = timeLeft !== null && timeLeft < 60 && timeLeft > 0;
   
   // Start quiz when first question is loaded
   useEffect(() => {
@@ -514,6 +530,17 @@ function QuizTakingContent() {
   if (!quiz) return <QuizNotFound />;
   if (!quiz.questions || quiz.questions.length === 0) return <div className="p-4 text-red-500">Quiz nie ma pytań</div>;
   if (maxAttemptsReached) return <div className="p-4 text-red-500">Wykorzystano maksymalną liczbę prób dla tego quizu.</div>;
+  if (timeExpired && !quizSubmitted) {
+    // Show message while auto-submitting
+    return (
+      <div className="p-4 text-center">
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-6 max-w-md mx-auto">
+          <h2 className="text-xl font-bold mb-2">Czas minął!</h2>
+          <p>Quiz zostanie automatycznie zakończony...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Reset question index if out of range
   if (currentQuestionIndex < 0 || currentQuestionIndex >= quiz.questions.length) {
@@ -718,6 +745,11 @@ function QuizTakingContent() {
         {/* Wyniki quizu */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 mb-8">
           <div className="text-center mb-8">
+            {timeExpired && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 mb-4">
+                <p className="font-semibold">⏰ Czas minął! Quiz został automatycznie zakończony.</p>
+              </div>
+            )}
             <h2 className="text-3xl font-bold text-gray-900 mb-4">
               {grade >= 3 ? 'Gratulacje! Quiz ukończony' : 'Quiz ukończony'}
             </h2>
@@ -859,6 +891,9 @@ function QuizTakingContent() {
     );
   }
 
+  // Block interactions if time expired
+  const isBlocked = timeExpired && !quizSubmitted;
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation Bar */}
@@ -881,7 +916,7 @@ function QuizTakingContent() {
         </div>
       </div>
 
-    <div className="max-w-4xl mx-auto p-6">
+    <div className={`max-w-4xl mx-auto p-6 ${isBlocked ? 'pointer-events-none opacity-50' : ''}`}>
         {/* Quiz Header Card */}
         <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-4">{quiz.title}</h1>
@@ -910,12 +945,19 @@ function QuizTakingContent() {
               <div className="text-sm text-gray-600">
           Pytanie {currentQuestionIndex + 1} / {quiz.questions.length}
         </div>
-              <div className="flex items-center space-x-2 text-sm text-gray-600">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="font-mono">{formatTime(timeLeft)}</span>
-              </div>
+              {timeLeft !== null && (
+                <div className={`flex items-center space-x-2 text-sm font-medium ${
+                  isTimeRunningLow ? 'text-red-600 animate-pulse' : 'text-gray-600'
+                }`}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="font-mono">{formatTime(timeLeft)}</span>
+                  {isTimeRunningLow && (
+                    <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">Czas się kończy!</span>
+                  )}
+                </div>
+              )}
               <div className="text-sm text-gray-600">
                 {getAnsweredCount()} / {quiz.questions.length} odpowiedzi
               </div>
@@ -943,7 +985,13 @@ function QuizTakingContent() {
           </div>
 
           {/* Answer Options */}
-      {renderQuestion(currentQuestion)}
+          {isBlocked ? (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-4">
+              <p className="font-semibold">Czas minął! Quiz zostanie automatycznie zakończony...</p>
+            </div>
+          ) : (
+            renderQuestion(currentQuestion)
+          )}
         </div>
 
         {/* Progress and Navigation */}
@@ -1046,8 +1094,9 @@ function QuizTakingContent() {
                 setScore(0);
                 setGrade(0);
                 setGradeDescription('');
-                setTimeLeft(quiz.time_limit ? quiz.time_limit * 60 : 1800);
+                setTimeLeft(quiz.time_limit ? quiz.time_limit * 60 : null);
                 setQuizStarted(false);
+                setTimeExpired(false);
                 // Odśwież liczbę prób
                 fetchAttempts(quizId).then(count => {
                   setAttemptsCount(count);

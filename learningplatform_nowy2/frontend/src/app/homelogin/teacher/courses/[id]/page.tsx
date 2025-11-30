@@ -73,12 +73,14 @@ interface Section {
   name?: string;
   type?: "material" | "assignment";
   description?: string;
+  descriptionFiles?: { url: string; name: string; type: string }[];
   order?: number;
   deadline?: string;
   contents?: SectionContent[];
   subsections?: Subsection[];
   fileUrl?: string;
   submissions?: { userId: string; fileUrl?: string; submittedAt?: string }[];
+  quizId?: string;
 }
 
 interface ContentBlock {
@@ -201,6 +203,11 @@ function TeacherCourseDetailContent() {
   const [quizError, setQuizError] = useState<string | null>(null);
   const [showQuizAssignmentModal, setShowQuizAssignmentModal] = useState(false);
   const [showQuizzesSection, setShowQuizzesSection] = useState(false);
+  const [editingSectionDescription, setEditingSectionDescription] = useState<number | null>(null);
+  const [sectionDescription, setSectionDescription] = useState<string>('');
+  const [sectionDescriptionFiles, setSectionDescriptionFiles] = useState<File[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState<boolean>(false);
+  const [showSectionQuizModal, setShowSectionQuizModal] = useState<number | null>(null);
 
   // Nowe zmienne dla zarządzania uczniami
   const [studentSearchTerm, setStudentSearchTerm] = useState<string>("");
@@ -460,6 +467,22 @@ function TeacherCourseDetailContent() {
       setEditingQuizBlockId(null);
     }
     setShowQuizSelector(false);
+  };
+
+  const assignQuizToSection = async (sectionId: number, quizId: string) => {
+    if (!courseId) return;
+    
+    const updatedSections = sections.map(s => 
+      s.id === sectionId 
+        ? { ...s, quizId } 
+        : s
+    );
+    
+    setSections(updatedSections as Section[]);
+    setShowSectionQuizModal(null);
+    
+    await saveSectionsToFirestore(courseId, updatedSections);
+    await refreshCourseData();
   };
 
   const openQuizPreview = (quizId: string) => {
@@ -1120,6 +1143,108 @@ function TeacherCourseDetailContent() {
     setEditSection(null);
     // Jeśli chcesz obsłużyć usuwanie, dodaj tu logikę i zapis do Firestore
   }, []);
+
+  // Rozpocznij edycję opisu sekcji
+  const handleEditSectionDescription = useCallback((section: Section) => {
+    setEditingSectionDescription(Number(section.id));
+    setSectionDescription(section.description || '');
+    setSectionDescriptionFiles([]);
+  }, []);
+
+  // Zapisz opis sekcji
+  const handleSaveSectionDescription = useCallback(async () => {
+    if (editingSectionDescription === null || !courseId) return;
+    
+    setUploadingFiles(true);
+    try {
+      const storage = getStorage();
+      const uploadedFiles: { url: string; name: string; type: string }[] = [];
+      
+      // Upload nowych plików
+      if (sectionDescriptionFiles.length > 0) {
+        for (const file of sectionDescriptionFiles) {
+          const fileRef = ref(storage, `courses/${courseId}/exam-descriptions/${editingSectionDescription}/${Date.now()}_${file.name}`);
+          await uploadBytes(fileRef, file);
+          const fileUrl = await getDownloadURL(fileRef);
+          uploadedFiles.push({
+            url: fileUrl,
+            name: file.name,
+            type: file.type
+          });
+        }
+      }
+      
+      // Pobierz istniejące pliki z sekcji
+      const currentSection = sections.find(s => s.id === editingSectionDescription);
+      const existingFiles = currentSection?.descriptionFiles || [];
+      
+      // Połącz istniejące pliki z nowymi
+      const allFiles = [...existingFiles, ...uploadedFiles];
+      
+      const updatedSections = sections.map(s => 
+        s.id === editingSectionDescription 
+          ? { ...s, description: sectionDescription.trim(), descriptionFiles: allFiles } 
+          : s
+      );
+      
+      setSections(updatedSections as Section[]);
+      setEditingSectionDescription(null);
+      setSectionDescription('');
+      setSectionDescriptionFiles([]);
+      
+      if (courseId) {
+        await saveSectionsToFirestore(courseId, updatedSections);
+        await refreshCourseData();
+      }
+    } catch (error) {
+      console.error('Error saving section description:', error);
+      alert('Błąd podczas zapisywania opisu i plików');
+    } finally {
+      setUploadingFiles(false);
+    }
+  }, [editingSectionDescription, sectionDescription, sectionDescriptionFiles, sections, courseId, saveSectionsToFirestore, refreshCourseData]);
+
+  // Anuluj edycję opisu sekcji
+  const handleCancelSectionDescription = useCallback(() => {
+    setEditingSectionDescription(null);
+    setSectionDescription('');
+    setSectionDescriptionFiles([]);
+  }, []);
+
+  // Obsługa wyboru plików
+  const handleDescriptionFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArray = Array.from(e.target.files);
+      setSectionDescriptionFiles(prev => [...prev, ...filesArray]);
+    }
+  }, []);
+
+  // Usuń plik z listy przed uploadem
+  const removeDescriptionFile = useCallback((index: number) => {
+    setSectionDescriptionFiles(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Usuń załączony plik z sekcji
+  const removeSectionDescriptionFile = useCallback(async (sectionId: number, fileIndex: number) => {
+    if (!courseId) return;
+    
+    const section = sections.find(s => s.id === sectionId);
+    if (!section || !section.descriptionFiles) return;
+    
+    const updatedFiles = section.descriptionFiles.filter((_, i) => i !== fileIndex);
+    const updatedSections = sections.map(s => 
+      s.id === sectionId 
+        ? { ...s, descriptionFiles: updatedFiles } 
+        : s
+    );
+    
+    setSections(updatedSections as Section[]);
+    
+    if (courseId) {
+      await saveSectionsToFirestore(courseId, updatedSections);
+      await refreshCourseData();
+    }
+  }, [sections, courseId, saveSectionsToFirestore, refreshCourseData]);
 
   // Rozpocznij edycję materiału
   const handleEditContent = useCallback((content: SectionContent) => {
@@ -2100,16 +2225,197 @@ function TeacherCourseDetailContent() {
                   </form>
                 )}
 
-                {/* Przycisk dodawania podsekcji */}
-                <div className="mb-4">
-                  <button
-                    onClick={() => setAddingSubsection(Number(section.id))}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
-                  >
-                    <FaPlus className="text-sm" />
-                    Dodaj lekcję
-                  </button>
-                </div>
+                {/* Przyciski dla sekcji egzaminu vs zwykłej sekcji */}
+                {section.type === 'assignment' ? (
+                  <div className="mb-4 flex gap-3">
+                    <button
+                      onClick={() => handleEditSectionDescription(section)}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    >
+                      <FaPlus className="text-sm" />
+                      Dodaj opis
+                    </button>
+                    <button
+                      onClick={() => setShowSectionQuizModal(Number(section.id))}
+                      className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+                    >
+                      <FaQuestionCircle className="text-sm" />
+                      Przypisz quiz
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mb-4">
+                    <button
+                      onClick={() => setAddingSubsection(Number(section.id))}
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                    >
+                      <FaPlus className="text-sm" />
+                      Dodaj lekcję
+                    </button>
+                  </div>
+                )}
+
+                {/* Formularz edycji opisu sekcji (tylko dla egzaminów) */}
+                {section.type === 'assignment' && editingSectionDescription === Number(section.id) && (
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 mb-4">
+                    <h4 className="font-semibold text-blue-800 mb-3">Dodaj opis egzaminu</h4>
+                    <div className="space-y-3">
+                      <textarea
+                        placeholder="Opis egzaminu..."
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 min-h-[100px]"
+                        value={sectionDescription}
+                        onChange={e => setSectionDescription(e.target.value)}
+                      />
+                      
+                      {/* Input do załączania plików */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Załącz pliki (PDF, JPG, PNG, itp.)
+                        </label>
+                        <input
+                          type="file"
+                          multiple
+                          accept=".pdf,.jpg,.jpeg,.png,.gif,.doc,.docx,.txt"
+                          onChange={handleDescriptionFileChange}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        />
+                        {sectionDescriptionFiles.length > 0 && (
+                          <div className="mt-2 space-y-2">
+                            {sectionDescriptionFiles.map((file, index) => (
+                              <div key={index} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200">
+                                <div className="flex items-center gap-2">
+                                  {file.type.startsWith('image/') ? (
+                                    <FaImage className="text-blue-600" />
+                                  ) : (
+                                    <FaFilePdf className="text-red-600" />
+                                  )}
+                                  <span className="text-sm text-gray-700">{file.name}</span>
+                                  <span className="text-xs text-gray-500">
+                                    ({(file.size / 1024).toFixed(2)} KB)
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => removeDescriptionFile(index)}
+                                  className="text-red-600 hover:text-red-800 text-sm"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveSectionDescription}
+                          disabled={uploadingFiles}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {uploadingFiles ? 'Zapisywanie...' : 'Zapisz'}
+                        </button>
+                        <button
+                          onClick={handleCancelSectionDescription}
+                          disabled={uploadingFiles}
+                          className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 disabled:opacity-50"
+                        >
+                          Anuluj
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Wyświetlanie opisu sekcji (jeśli istnieje) */}
+                {section.type === 'assignment' && (section.description || section.descriptionFiles?.length) && editingSectionDescription !== Number(section.id) && (
+                  <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    {section.description && (
+                      <p className="text-gray-700 whitespace-pre-wrap mb-3">{section.description}</p>
+                    )}
+                    
+                    {/* Wyświetlanie załączonych plików */}
+                    {section.descriptionFiles && section.descriptionFiles.length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-sm font-medium text-gray-700 mb-2">Załączone pliki:</p>
+                        <div className="space-y-2">
+                          {section.descriptionFiles.map((file, index) => (
+                            <div key={index} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200">
+                              <div className="flex items-center gap-2">
+                                {file.type.startsWith('image/') ? (
+                                  <FaImage className="text-blue-600" />
+                                ) : file.name.toLowerCase().endsWith('.pdf') ? (
+                                  <FaFilePdf className="text-red-600" />
+                                ) : (
+                                  <FaFileAlt className="text-gray-600" />
+                                )}
+                                <a
+                                  href={file.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                                >
+                                  {file.name}
+                                </a>
+                              </div>
+                              <button
+                                onClick={() => removeSectionDescriptionFile(Number(section.id), index)}
+                                className="text-red-600 hover:text-red-800 text-sm ml-2"
+                                title="Usuń plik"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    <button
+                      onClick={() => handleEditSectionDescription(section)}
+                      className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                    >
+                      Edytuj opis
+                    </button>
+                  </div>
+                )}
+
+                {/* Wyświetlanie przypisanego quizu (jeśli istnieje) */}
+                {section.type === 'assignment' && section.quizId && (
+                  <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-gray-600 mb-1">Przypisany quiz:</p>
+                        <p className="font-semibold text-purple-800">
+                          {quizzes.find(q => q.id === section.quizId)?.title || 'Quiz (ID: ' + section.quizId + ')'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => section.quizId && openQuizPreview(section.quizId)}
+                          className="text-sm text-purple-600 hover:text-purple-800"
+                        >
+                          Podgląd
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!courseId) return;
+                            const updatedSections = sections.map(s => 
+                              s.id === section.id 
+                                ? { ...s, quizId: undefined } 
+                                : s
+                            );
+                            setSections(updatedSections as Section[]);
+                            await saveSectionsToFirestore(courseId, updatedSections);
+                            await refreshCourseData();
+                          }}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Usuń
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Formularz dodawania podsekcji */}
                 {addingSubsection === Number(section.id) && (
@@ -3203,6 +3509,51 @@ function TeacherCourseDetailContent() {
               {quizzes.length === 0 && (
                 <div className="text-center text-gray-500 py-8">
                   <p>Brak dostępnych quizów</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal przypisywania quizu do sekcji egzaminu */}
+      {showSectionQuizModal !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-800">Przypisz quiz do egzaminu</h2>
+              <button
+                onClick={() => setShowSectionQuizModal(null)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {quizzes.filter(q => q.course_id === courseId || !q.course_id).map((quiz) => (
+                <div key={quiz.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <h3 className="font-medium text-gray-800">{quiz.title}</h3>
+                      <p className="text-sm text-gray-600 mt-1">{quiz.description}</p>
+                      <p className="text-xs text-gray-500 mt-2">
+                        {quiz.questions?.length || 0} pytań
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => assignQuizToSection(showSectionQuizModal, quiz.id)}
+                      className="bg-purple-600 text-white px-4 py-2 rounded text-sm hover:bg-purple-700"
+                    >
+                      Przypisz
+                    </button>
+                  </div>
+                </div>
+              ))}
+              
+              {quizzes.filter(q => q.course_id === courseId || !q.course_id).length === 0 && (
+                <div className="text-center text-gray-500 py-8">
+                  <p>Brak dostępnych quizów dla tego kursu</p>
                 </div>
               )}
             </div>
