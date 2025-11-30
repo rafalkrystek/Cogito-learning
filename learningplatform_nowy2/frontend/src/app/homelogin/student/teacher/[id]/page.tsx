@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { 
   ArrowLeft, 
@@ -11,7 +11,8 @@ import {
   BookOpen, 
   Award, 
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Trophy
 } from 'lucide-react';
 
 interface Achievement {
@@ -20,6 +21,22 @@ interface Achievement {
   description: string;
   date: string;
   icon: string;
+}
+
+interface Badge {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  currentLevel: number;
+  currentProgress: number;
+  nextLevelThreshold: number;
+  levels: {
+    name: string;
+    threshold: number;
+    color: string;
+    gradient: string;
+  }[];
 }
 
 interface Course {
@@ -58,6 +75,7 @@ export default function TeacherProfilePage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [badges, setBadges] = useState<Badge[]>([]);
 
   const fetchTeacherProfile = useCallback(async () => {
     if (!teacherId) return;
@@ -178,30 +196,171 @@ export default function TeacherProfilePage() {
         console.error('Błąd podczas pobierania ankiet:', error);
       }
       
-      // Mock achievements
-      const mockAchievements: Achievement[] = [
+      // Pobierz dodatkowe dane dla odznak
+      let totalLessons = 0;
+      let totalQuizzes = 0;
+      let totalGrades = 0;
+      let activeDays = 0;
+      
+      // Oblicz liczbę lekcji i quizów
+      coursesMap.forEach((course: any) => {
+        if (course.sections && Array.isArray(course.sections)) {
+          course.sections.forEach((section: any) => {
+            if (section.subsections && section.subsections.length > 0) {
+              totalLessons += section.subsections.length;
+            } else if (section.contents && section.contents.length > 0) {
+              totalLessons += 1;
+            }
+            if (section.quizId) {
+              totalQuizzes += 1;
+            }
+          });
+        }
+      });
+      
+      // Pobierz liczbę quizów z kolekcji quizzes
+      try {
+        const quizzesCollection = collection(db, 'quizzes');
+        const quizzesQuery = query(quizzesCollection, where('createdBy', '==', teacherId));
+        const quizzesSnapshot = await getDocs(quizzesQuery);
+        totalQuizzes = Math.max(totalQuizzes, quizzesSnapshot.docs.length);
+      } catch (error) {
+        console.error('Błąd podczas pobierania quizów:', error);
+      }
+      
+      // Pobierz liczbę wystawionych ocen
+      try {
+        const gradesCollection = collection(db, 'grades');
+        const gradesQuery = query(gradesCollection, where('teacherId', '==', teacherId));
+        const gradesSnapshot = await getDocs(gradesQuery);
+        totalGrades = gradesSnapshot.docs.length;
+      } catch (error) {
+        console.error('Błąd podczas pobierania ocen:', error);
+      }
+      
+      // Pobierz liczbę aktywnych dni
+      try {
+        const learningTimeDoc = await getDoc(doc(db, 'userLearningTime', teacherId));
+        if (learningTimeDoc.exists()) {
+          const data = learningTimeDoc.data();
+          if (data.dailyStats) {
+            activeDays = Object.keys(data.dailyStats).length;
+          }
+        }
+      } catch (error) {
+        console.error('Błąd podczas pobierania aktywności:', error);
+      }
+      
+      // Oblicz odznaki
+      const calculateLevel = (value: number, thresholds: number[]): number => {
+        for (let i = thresholds.length - 1; i >= 0; i--) {
+          if (value >= thresholds[i]) return i;
+        }
+        return 0;
+      };
+
+      const calculatedBadges: Badge[] = [
         {
-          id: '1',
-          title: 'Mistrz Edukacji',
-          description: 'Za przeprowadzenie 100+ lekcji',
-          date: '10.01.2024',
-          icon: '🏆'
+          id: 'education-master',
+          name: 'Mistrz Edukacji',
+          description: 'Za liczbę utworzonych kursów',
+          icon: '📚',
+          currentLevel: calculateLevel(activeCourses, [0, 3, 10, 20, 50]),
+          currentProgress: activeCourses,
+          nextLevelThreshold: [3, 10, 20, 50, 100][Math.min(calculateLevel(activeCourses, [0, 3, 10, 20, 50]) + 1, 4)] || 100,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 10, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 20, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 50, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
         },
         {
-          id: '2',
-          title: 'Mentor Roku',
-          description: 'Za wysokie oceny od uczniów',
-          date: '05.01.2024',
-          icon: '⭐'
+          id: 'mentor',
+          name: 'Mentor',
+          description: 'Za liczbę uczniów',
+          icon: '👥',
+          currentLevel: calculateLevel(totalStudents, [0, 5, 20, 50, 100]),
+          currentProgress: totalStudents,
+          nextLevelThreshold: [5, 20, 50, 100, 200][Math.min(calculateLevel(totalStudents, [0, 5, 20, 50, 100]) + 1, 4)] || 200,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 20, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 50, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 100, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
         },
         {
-          id: '3',
-          title: 'Innowator',
-          description: 'Za wprowadzenie nowych metod nauczania',
-          date: '15.12.2023',
-          icon: '💡'
+          id: 'expert',
+          name: 'Ekspert',
+          description: 'Za wysoką średnią ocenę od uczniów',
+          icon: '⭐',
+          currentLevel: calculateLevel(averageRating, [0, 3.5, 4, 4.5, 4.8]),
+          currentProgress: Math.round(averageRating * 10) / 10,
+          nextLevelThreshold: [3.5, 4, 4.5, 4.8, 5][Math.min(calculateLevel(averageRating, [0, 3.5, 4, 4.5, 4.8]) + 1, 4)] || 5,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3.5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 4, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 4.5, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 4.8, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'content-creator',
+          name: 'Twórca Treści',
+          description: 'Za liczbę utworzonych lekcji',
+          icon: '✍️',
+          currentLevel: calculateLevel(totalLessons, [0, 10, 30, 50, 100]),
+          currentProgress: totalLessons,
+          nextLevelThreshold: [10, 30, 50, 100, 200][Math.min(calculateLevel(totalLessons, [0, 10, 30, 50, 100]) + 1, 4)] || 200,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 30, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 50, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 100, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'active-teacher',
+          name: 'Aktywny Nauczyciel',
+          description: 'Za liczbę dni aktywności',
+          icon: '🔥',
+          currentLevel: calculateLevel(activeDays, [0, 7, 30, 60, 120]),
+          currentProgress: activeDays,
+          nextLevelThreshold: [7, 30, 60, 120, 180][Math.min(calculateLevel(activeDays, [0, 7, 30, 60, 120]) + 1, 4)] || 180,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 7, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 30, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 60, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 120, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'fair-judge',
+          name: 'Sprawiedliwy Sędzia',
+          description: 'Za liczbę wystawionych ocen',
+          icon: '⚖️',
+          currentLevel: calculateLevel(totalGrades, [0, 10, 50, 100, 200]),
+          currentProgress: totalGrades,
+          nextLevelThreshold: [10, 50, 100, 200, 500][Math.min(calculateLevel(totalGrades, [0, 10, 50, 100, 200]) + 1, 4)] || 500,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 50, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 100, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 200, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
         }
       ];
+
+      // Posortuj według poziomu (najwyższe pierwsze)
+      const sorted = calculatedBadges.sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress);
+      setBadges(sorted);
       
       setTeacher({
         id: teacherId,
@@ -219,7 +378,7 @@ export default function TeacherProfilePage() {
         activeCourses,
         totalStudents,
         averageRating,
-        achievements: teacherData.achievements || mockAchievements
+        achievements: []
       });
       
     } catch (err) {
@@ -371,34 +530,19 @@ export default function TeacherProfilePage() {
                 )}
               </div>
 
-              {/* Achievements */}
-              {teacher.achievements && teacher.achievements.length > 0 && (
+              {/* Odznaki */}
+              {badges.length > 0 && (
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h4 className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-                      <Award className="w-5 h-5 text-yellow-600 dark:text-yellow-500" />
-                      Osiągnięcia
+                      <Trophy className="w-5 h-5 text-yellow-600 dark:text-yellow-500" />
+                      Odznaki
                     </h4>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">{teacher.achievements.length} odznak</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{badges.length} odznak</span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {teacher.achievements.map((achievement) => (
-                      <div 
-                        key={achievement.id} 
-                        className="flex items-start gap-3 p-4 bg-gradient-to-r from-gray-50 via-blue-50 to-purple-50 dark:from-gray-700 dark:via-blue-900/20 dark:to-purple-900/20 rounded-xl hover:from-blue-100 hover:via-purple-100 hover:to-pink-100 dark:hover:from-blue-900/30 dark:hover:via-purple-900/30 dark:hover:to-pink-900/30 transition-all duration-300 border-2 border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500"
-                      >
-                        <div className="text-3xl">{achievement.icon}</div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h5 className="font-bold text-sm text-gray-900 dark:text-gray-100">{achievement.title}</h5>
-                          </div>
-                          <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">{achievement.description}</p>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-3 w-3 text-gray-400 dark:text-gray-500" />
-                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{achievement.date}</p>
-                          </div>
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {badges.map((badge) => (
+                      <TeacherBadgeCard key={badge.id} badge={badge} />
                     ))}
                   </div>
                 </div>
@@ -445,6 +589,98 @@ export default function TeacherProfilePage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Komponent karty odznaki dla nauczyciela
+function TeacherBadgeCard({ badge }: { badge: Badge }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const currentLevelData = badge.levels[badge.currentLevel];
+  const progressPercentage = badge.nextLevelThreshold > 0 
+    ? Math.min(100, (badge.currentProgress / badge.nextLevelThreshold) * 100)
+    : 100;
+
+  return (
+    <div
+      className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 border-2 border-white/30 dark:border-gray-600/30 hover:border-white/50 dark:hover:border-gray-500/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl cursor-pointer`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Poziom odznaki */}
+      <div className="absolute top-2 right-2">
+        <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 dark:bg-gray-800/50 backdrop-blur-sm">
+          {currentLevelData.name}
+        </div>
+      </div>
+
+      {/* Ikona */}
+      <div className="flex justify-center mb-3">
+        <div className={`text-4xl transform transition-transform duration-300 ${isHovered ? 'scale-125 rotate-12' : ''}`}>
+          {badge.icon}
+        </div>
+      </div>
+
+      {/* Nazwa */}
+      <h4 className="text-base font-bold text-white mb-1 text-center">
+        {badge.name}
+      </h4>
+
+      {/* Opis */}
+      <p className="text-xs text-white/90 text-center mb-2">
+        {badge.description}
+      </p>
+
+      {/* Poziom */}
+      <p className="text-xs text-white/80 text-center mb-2">
+        Poziom {badge.currentLevel + 1} / {badge.levels.length}
+      </p>
+
+      {/* Pasek postępu */}
+      {badge.currentLevel < badge.levels.length - 1 ? (
+        <div className="space-y-1">
+          <div className="w-full bg-white/20 dark:bg-gray-800/50 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 bg-white/40 dark:bg-gray-200/40"
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+          <p className="text-xs text-white/80 text-center">
+            {Math.round(badge.currentProgress)} / {badge.nextLevelThreshold}
+          </p>
+        </div>
+      ) : (
+        <div className="text-center">
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-white/20 dark:bg-gray-800/50 rounded-full">
+            <Trophy className="w-3 h-3 text-yellow-300" />
+            <span className="text-xs font-semibold text-white">Maksymalny poziom!</span>
+          </div>
+        </div>
+      )}
+
+      {/* Tooltip z wszystkimi poziomami */}
+      {isHovered && (
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 bg-gray-900 dark:bg-gray-800 text-white rounded-lg p-4 shadow-xl z-10">
+          <div className="text-xs font-semibold mb-2">Wszystkie poziomy:</div>
+          <div className="space-y-1">
+            {badge.levels.map((level, idx) => (
+              <div
+                key={idx}
+                className={`text-xs flex items-center justify-between ${
+                  idx === badge.currentLevel ? 'font-bold' : idx < badge.currentLevel ? 'opacity-75' : 'opacity-50'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className={idx <= badge.currentLevel ? level.color : 'text-gray-500'}>
+                    {level.name}
+                  </span>
+                </span>
+                <span className="text-gray-400">{typeof level.threshold === 'number' ? Math.round(level.threshold) : level.threshold}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { User, Mail, Phone, Calendar, Award, BookOpen, Users, Lock, Eye, EyeOff, RefreshCw, Star, TrendingUp, Activity, Target, Zap, Camera, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
+import { User, Mail, Phone, Calendar, Award, BookOpen, Users, Lock, Eye, EyeOff, RefreshCw, Star, TrendingUp, Activity, Target, Zap, Camera, ArrowLeft, CheckCircle, XCircle, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { auth, db, storage } from '@/config/firebase';
 import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -16,6 +16,114 @@ interface Achievement {
   description: string;
   date: string;
   icon: string;
+}
+
+interface Badge {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  currentLevel: number;
+  currentProgress: number;
+  nextLevelThreshold: number;
+  levels: {
+    name: string;
+    threshold: number;
+    color: string;
+    gradient: string;
+  }[];
+}
+
+// Komponent karty odznaki dla nauczyciela
+function TeacherBadgeCard({ badge }: { badge: Badge }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const currentLevelData = badge.levels[badge.currentLevel];
+  const progressPercentage = badge.nextLevelThreshold > 0 
+    ? Math.min(100, (badge.currentProgress / badge.nextLevelThreshold) * 100)
+    : 100;
+
+  return (
+    <div
+      className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 border-2 border-white/30 hover:border-white/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl cursor-pointer`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Poziom odznaki */}
+      <div className="absolute top-2 right-2">
+        <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 backdrop-blur-sm">
+          {currentLevelData.name}
+        </div>
+      </div>
+
+      {/* Ikona */}
+      <div className="flex justify-center mb-3">
+        <div className={`text-4xl transform transition-transform duration-300 ${isHovered ? 'scale-125 rotate-12' : ''}`}>
+          {badge.icon}
+        </div>
+      </div>
+
+      {/* Nazwa */}
+      <h4 className="text-base font-bold text-white mb-1 text-center">
+        {badge.name}
+      </h4>
+
+      {/* Opis */}
+      <p className="text-xs text-white/90 text-center mb-2">
+        {badge.description}
+      </p>
+
+      {/* Poziom */}
+      <p className="text-xs text-white/80 text-center mb-2">
+        Poziom {badge.currentLevel + 1} / {badge.levels.length}
+      </p>
+
+      {/* Pasek postępu */}
+      {badge.currentLevel < badge.levels.length - 1 ? (
+        <div className="space-y-1">
+          <div className="w-full bg-white/20 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 bg-white/40"
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+          <p className="text-xs text-white/80 text-center">
+            {Math.round(badge.currentProgress)} / {badge.nextLevelThreshold}
+          </p>
+        </div>
+      ) : (
+        <div className="text-center">
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-white/20 rounded-full">
+            <Trophy className="w-3 h-3 text-yellow-300" />
+            <span className="text-xs font-semibold text-white">Maksymalny poziom!</span>
+          </div>
+        </div>
+      )}
+
+      {/* Tooltip z wszystkimi poziomami */}
+      {isHovered && (
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 bg-gray-900 text-white rounded-lg p-4 shadow-xl z-10">
+          <div className="text-xs font-semibold mb-2">Wszystkie poziomy:</div>
+          <div className="space-y-1">
+            {badge.levels.map((level, idx) => (
+              <div
+                key={idx}
+                className={`text-xs flex items-center justify-between ${
+                  idx === badge.currentLevel ? 'font-bold' : idx < badge.currentLevel ? 'opacity-75' : 'opacity-50'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className={idx <= badge.currentLevel ? level.color : 'text-gray-500'}>
+                    {level.name}
+                  </span>
+                </span>
+                <span className="text-gray-400">{typeof level.threshold === 'number' ? Math.round(level.threshold) : level.threshold}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface ProfileData {
@@ -70,37 +178,16 @@ export default function TeacherProfilePage() {
   // Messages
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Mock achievements data
-  const [achievements] = useState<Achievement[]>([
-    {
-      id: '1',
-      title: 'Mistrz Edukacji',
-      description: 'Za przeprowadzenie 100+ lekcji',
-      date: '10.01.2024',
-      icon: '🏆'
-    },
-    {
-      id: '2',
-      title: 'Mentor Roku',
-      description: 'Za wysokie oceny od uczniów',
-      date: '05.01.2024',
-      icon: '⭐'
-    },
-    {
-      id: '3',
-      title: 'Innowator',
-      description: 'Za wprowadzenie nowych metod nauczania',
-      date: '15.12.2023',
-      icon: '💡'
-    },
-    {
-      id: '4',
-      title: 'Przyjaciel Uczniów',
-      description: 'Za najlepsze oceny od studentów',
-      date: '01.12.2023',
-      icon: '❤️'
-    }
-  ]);
+  const [badges, setBadges] = useState<Badge[]>([]);
+  const [teacherStats, setTeacherStats] = useState({
+    totalCourses: 0,
+    totalStudents: 0,
+    averageRating: 0,
+    totalLessons: 0,
+    totalQuizzes: 0,
+    totalGrades: 0,
+    activeDays: 0
+  });
 
   const loadUserData = useCallback(async () => {
     if (user) {
@@ -337,8 +424,58 @@ export default function TeacherProfilePage() {
       
       console.log(`Średnia ocena: ${averageRating.toFixed(1)}`);
       
-      // 5. Oblicz liczbę lekcji (można rozszerzyć później)
-      const totalLessons = 0; // Placeholder - można dodać logikę zliczania lekcji
+      // 5. Oblicz liczbę lekcji i materiałów
+      let totalLessons = 0;
+      let totalQuizzes = 0;
+      courses.forEach((course: any) => {
+        if (course.sections && Array.isArray(course.sections)) {
+          course.sections.forEach((section: any) => {
+            if (section.subsections && section.subsections.length > 0) {
+              totalLessons += section.subsections.length;
+            } else if (section.contents && section.contents.length > 0) {
+              totalLessons += 1;
+            }
+            if (section.quizId) {
+              totalQuizzes += 1;
+            }
+          });
+        }
+      });
+      
+      // 6. Pobierz liczbę quizów z kolekcji quizzes
+      try {
+        const quizzesCollection = collection(db, 'quizzes');
+        const quizzesQuery = query(quizzesCollection, where('createdBy', '==', user.uid));
+        const quizzesSnapshot = await getDocs(quizzesQuery);
+        totalQuizzes = Math.max(totalQuizzes, quizzesSnapshot.docs.length);
+      } catch (error) {
+        console.error('Błąd podczas pobierania quizów:', error);
+      }
+      
+      // 7. Pobierz liczbę wystawionych ocen
+      let totalGrades = 0;
+      try {
+        const gradesCollection = collection(db, 'grades');
+        const gradesQuery = query(gradesCollection, where('teacherId', '==', user.uid));
+        const gradesSnapshot = await getDocs(gradesQuery);
+        totalGrades = gradesSnapshot.docs.length;
+      } catch (error) {
+        console.error('Błąd podczas pobierania ocen:', error);
+      }
+      
+      // 8. Pobierz liczbę aktywnych dni (jeśli istnieje userLearningTime dla nauczyciela)
+      let activeDays = 0;
+      try {
+        const learningTimeDoc = await getDoc(doc(db, 'userLearningTime', user.uid));
+        if (learningTimeDoc.exists()) {
+          const data = learningTimeDoc.data();
+          if (data.dailyStats) {
+            activeDays = Object.keys(data.dailyStats).length;
+          }
+        }
+      } catch (error) {
+        console.error('Błąd podczas pobierania aktywności:', error);
+      }
       
       // Zaktualizuj statystyki
       setProfileData(prev => ({
@@ -348,6 +485,17 @@ export default function TeacherProfilePage() {
         averageRating,
         totalLessons
       }));
+      
+      // Zaktualizuj rozszerzone statystyki dla odznak
+      setTeacherStats({
+        totalCourses: activeCourses,
+        totalStudents,
+        averageRating,
+        totalLessons,
+        totalQuizzes,
+        totalGrades,
+        activeDays
+      });
       
       // Opcjonalnie: zapisz statystyki do dokumentu użytkownika
       try {
@@ -372,7 +520,127 @@ export default function TeacherProfilePage() {
 
   useEffect(() => {
     loadUserData();
-  }, [user, loadUserData]);
+    loadTeacherStats();
+  }, [user, loadUserData, loadTeacherStats]);
+
+  // Oblicz odznaki na podstawie statystyk nauczyciela
+  useEffect(() => {
+    const calculateBadges = () => {
+      const { totalCourses, totalStudents, averageRating, totalLessons, totalQuizzes, totalGrades, activeDays } = teacherStats;
+
+      const calculateLevel = (value: number, thresholds: number[]): number => {
+        for (let i = thresholds.length - 1; i >= 0; i--) {
+          if (value >= thresholds[i]) return i;
+        }
+        return 0;
+      };
+
+      const calculatedBadges: Badge[] = [
+        {
+          id: 'education-master',
+          name: 'Mistrz Edukacji',
+          description: 'Za liczbę utworzonych kursów',
+          icon: '📚',
+          currentLevel: calculateLevel(totalCourses, [0, 3, 10, 20, 50]),
+          currentProgress: totalCourses,
+          nextLevelThreshold: [3, 10, 20, 50, 100][Math.min(calculateLevel(totalCourses, [0, 3, 10, 20, 50]) + 1, 4)] || 100,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 10, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 20, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 50, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'mentor',
+          name: 'Mentor',
+          description: 'Za liczbę uczniów',
+          icon: '👥',
+          currentLevel: calculateLevel(totalStudents, [0, 5, 20, 50, 100]),
+          currentProgress: totalStudents,
+          nextLevelThreshold: [5, 20, 50, 100, 200][Math.min(calculateLevel(totalStudents, [0, 5, 20, 50, 100]) + 1, 4)] || 200,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 20, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 50, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 100, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'expert',
+          name: 'Ekspert',
+          description: 'Za wysoką średnią ocenę od uczniów',
+          icon: '⭐',
+          currentLevel: calculateLevel(averageRating, [0, 3.5, 4, 4.5, 4.8]),
+          currentProgress: Math.round(averageRating * 10) / 10,
+          nextLevelThreshold: [3.5, 4, 4.5, 4.8, 5][Math.min(calculateLevel(averageRating, [0, 3.5, 4, 4.5, 4.8]) + 1, 4)] || 5,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3.5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 4, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 4.5, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 4.8, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'content-creator',
+          name: 'Twórca Treści',
+          description: 'Za liczbę utworzonych lekcji',
+          icon: '✍️',
+          currentLevel: calculateLevel(totalLessons, [0, 10, 30, 50, 100]),
+          currentProgress: totalLessons,
+          nextLevelThreshold: [10, 30, 50, 100, 200][Math.min(calculateLevel(totalLessons, [0, 10, 30, 50, 100]) + 1, 4)] || 200,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 30, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 50, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 100, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'active-teacher',
+          name: 'Aktywny Nauczyciel',
+          description: 'Za liczbę dni aktywności',
+          icon: '🔥',
+          currentLevel: calculateLevel(activeDays, [0, 7, 30, 60, 120]),
+          currentProgress: activeDays,
+          nextLevelThreshold: [7, 30, 60, 120, 180][Math.min(calculateLevel(activeDays, [0, 7, 30, 60, 120]) + 1, 4)] || 180,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 7, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 30, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 60, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 120, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'fair-judge',
+          name: 'Sprawiedliwy Sędzia',
+          description: 'Za liczbę wystawionych ocen',
+          icon: '⚖️',
+          currentLevel: calculateLevel(totalGrades, [0, 10, 50, 100, 200]),
+          currentProgress: totalGrades,
+          nextLevelThreshold: [10, 50, 100, 200, 500][Math.min(calculateLevel(totalGrades, [0, 10, 50, 100, 200]) + 1, 4)] || 500,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 50, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 100, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 200, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        }
+      ];
+
+      // Posortuj według poziomu (najwyższe pierwsze)
+      const sorted = calculatedBadges.sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress);
+      setBadges(sorted);
+    };
+
+    calculateBadges();
+  }, [teacherStats]);
 
   const handleEdit = () => {
     setIsEditing(true);
@@ -630,33 +898,18 @@ export default function TeacherProfilePage() {
                 </div>
 
                 {/* Achievements */}
-                {achievements && achievements.length > 0 && (
+                {badges && badges.length > 0 && (
                   <div className="mb-6">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="font-semibold text-gray-800 flex items-center gap-2">
-                        <Award className="w-5 h-5 text-yellow-600" />
-                        Osiągnięcia
+                        <Trophy className="w-5 h-5 text-yellow-600" />
+                        Odznaki
                       </h4>
-                      <span className="text-xs text-gray-500">{achievements.length} odznak</span>
+                      <span className="text-xs text-gray-500">{badges.length} odznak</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {achievements.map((achievement) => (
-                        <div 
-                          key={achievement.id} 
-                          className="flex items-start gap-3 p-4 bg-gradient-to-r from-gray-50 via-blue-50 to-purple-50 rounded-xl hover:from-blue-100 hover:via-purple-100 hover:to-pink-100 transition-all duration-300 border-2 border-gray-200 hover:border-blue-400"
-                        >
-                          <div className="text-3xl">{achievement.icon}</div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h5 className="font-bold text-sm text-gray-900">{achievement.title}</h5>
-                            </div>
-                            <p className="text-xs text-gray-600 mb-2">{achievement.description}</p>
-                            <div className="flex items-center gap-2">
-                              <Calendar className="h-3 w-3 text-gray-400" />
-                              <p className="text-xs font-medium text-gray-500">{achievement.date}</p>
-                            </div>
-                          </div>
-                        </div>
+                      {badges.slice(0, 4).map((badge) => (
+                        <TeacherBadgeCard key={badge.id} badge={badge} />
                       ))}
                     </div>
                   </div>
@@ -964,36 +1217,22 @@ export default function TeacherProfilePage() {
                   Ostatnie Osiągnięcia
                 </h3>
                 <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg border border-yellow-200">
-                  <Award className="h-5 w-5 text-yellow-600" />
-                  <span className="text-sm font-semibold text-yellow-700">{achievements.length} osiągnięć</span>
+                  <Trophy className="h-5 w-5 text-yellow-600" />
+                  <span className="text-sm font-semibold text-yellow-700">{badges.length} odznak</span>
                 </div>
               </div>
-              <div className="space-y-4">
-                {achievements.map((achievement) => (
-                  <div key={achievement.id} className="group flex items-start gap-4 p-5 bg-gradient-to-r from-gray-50 via-blue-50 to-purple-50 rounded-xl hover:from-blue-100 hover:via-purple-100 hover:to-pink-100 transition-all duration-300 hover:shadow-lg hover:scale-[1.02] border-2 border-gray-200 hover:border-blue-400">
-                    <div className="text-4xl group-hover:animate-bounce transition-transform">{achievement.icon}</div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4 className="font-bold text-lg text-gray-900 group-hover:text-blue-600 transition-colors">{achievement.title}</h4>
-                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-3">{achievement.description}</p>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-gray-400" />
-                        <p className="text-xs font-medium text-gray-500">{achievement.date}</p>
-                        <div className="ml-auto">
-                          <div className="w-12 h-1.5 bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 rounded-full"></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-6 pt-4 border-t-2 border-gray-200">
-                <button className="w-full text-center text-sm font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 py-3 rounded-xl transition-all duration-300 hover:scale-105">
-                  Zobacz wszystkie osiągnięcia →
-                </button>
-              </div>
+              {badges.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {badges.map((badge) => (
+                    <TeacherBadgeCard key={badge.id} badge={badge} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <Trophy className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-sm">Brak odznak - zacznij tworzyć kursy i uczyć uczniów!</p>
+                </div>
+              )}
             </div>
           </div>
         )}

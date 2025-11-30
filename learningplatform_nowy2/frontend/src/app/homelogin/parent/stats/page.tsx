@@ -51,6 +51,7 @@ export default function ParentStats() {
   const [showAllDays, setShowAllDays] = useState(false);
   const [showGrades, setShowGrades] = useState(false);
   const [assignedStudent, setAssignedStudent] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [topBadges, setTopBadges] = useState<any[]>([]);
 
   // Pobierz przypisanego ucznia
   useEffect(() => {
@@ -399,6 +400,178 @@ export default function ParentStats() {
       { grade: '1', count: gradeStats.gradeDistribution[1], color: '#DC2626' }
     ];
   };
+
+  // Oblicz odznaki dla przypisanego ucznia
+  useEffect(() => {
+    if (!assignedStudent) {
+      setTopBadges([]);
+      return;
+    }
+
+    const calculateBadges = () => {
+      // Zawsze oblicz odznaki, nawet jeśli nie ma danych (będą na poziomie 0)
+      const totalMinutes = learningData?.totalMinutes || 0;
+      const totalHours = totalMinutes / 60;
+      const daysActive = learningData ? Object.keys(learningData.dailyStats || {}).length : 0;
+      
+      // Oblicz średnią ocen
+      const normalizedGrades = grades.map(grade => {
+        let value = 0;
+        if (typeof grade.value === 'number') {
+          value = grade.value;
+        } else if (typeof grade.value_grade === 'number') {
+          value = grade.value_grade;
+        } else if (typeof grade.grade === 'number') {
+          value = grade.grade;
+        } else if (typeof grade.grade === 'string') {
+          value = parseFloat(grade.grade);
+        }
+        
+        if (value === 0 && grade.percentage) {
+          const percentage = typeof grade.percentage === 'number' ? grade.percentage : parseFloat(String(grade.percentage));
+          if (percentage >= 90) value = 5;
+          else if (percentage >= 75) value = 4;
+          else if (percentage >= 60) value = 3;
+          else if (percentage >= 45) value = 2;
+          else value = 1;
+        }
+        
+        value = Math.max(1, Math.min(5, Math.round(value)));
+        return { ...grade, normalizedValue: value };
+      });
+      const averageGrade = normalizedGrades.length > 0 
+        ? normalizedGrades.reduce((acc, g) => acc + g.normalizedValue, 0) / normalizedGrades.length 
+        : 0;
+      const totalGrades = normalizedGrades.length;
+
+      // Oblicz streak
+      const calculateStreak = () => {
+        if (!learningData?.dailyStats) return 0;
+        const sortedDates = Object.keys(learningData.dailyStats)
+          .map(date => new Date(date))
+          .sort((a, b) => b.getTime() - a.getTime());
+        if (sortedDates.length === 0) return 0;
+        let streak = 1;
+        for (let i = 0; i < sortedDates.length - 1; i++) {
+          const current = new Date(sortedDates[i]);
+          current.setHours(0, 0, 0, 0);
+          const next = new Date(sortedDates[i + 1]);
+          next.setHours(0, 0, 0, 0);
+          const diffDays = Math.floor((current.getTime() - next.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays === 1) streak++;
+          else break;
+        }
+        return streak;
+      };
+
+      const streak = calculateStreak();
+      const calculateLevel = (value: number, thresholds: number[]): number => {
+        for (let i = thresholds.length - 1; i >= 0; i--) {
+          if (value >= thresholds[i]) return i;
+        }
+        return 0;
+      };
+
+      const badges = [
+        {
+          id: 'time-master',
+          name: 'Mistrz Czasu',
+          icon: '⏰',
+          currentLevel: calculateLevel(totalHours, [0, 10, 50, 100, 200]),
+          currentProgress: Math.round(totalHours),
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 50, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 100, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 200, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'discipline',
+          name: 'Dyscyplina',
+          icon: '🔥',
+          currentLevel: calculateLevel(streak, [0, 3, 7, 14, 30]),
+          currentProgress: streak,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 7, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 14, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 30, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'perfectionist',
+          name: 'Perfekcjonista',
+          icon: '⭐',
+          currentLevel: calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5]),
+          currentProgress: Math.round(averageGrade * 10) / 10,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 3.5, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 4, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 4.5, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'explorer',
+          name: 'Eksplorator',
+          icon: '🗺️',
+          currentLevel: calculateLevel(daysActive, [0, 5, 15, 30, 60]),
+          currentProgress: daysActive,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 60, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'scholar',
+          name: 'Uczony',
+          icon: '📚',
+          currentLevel: calculateLevel(totalGrades, [0, 5, 15, 30, 50]),
+          currentProgress: totalGrades,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 50, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'daily-learner',
+          name: 'Dzień po Dniu',
+          icon: '📅',
+          currentLevel: calculateLevel(
+            daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+            [0, 30, 60, 120, 180]
+          ),
+          currentProgress: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 30, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 60, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 120, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 180, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        }
+      ];
+
+      // Posortuj według poziomu (najwyższe pierwsze) - wszystkie odznaki
+      const sorted = badges
+        .sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress);
+      
+      // Zawsze ustaw wszystkie 6 odznak
+      setTopBadges(sorted);
+    };
+
+    calculateBadges();
+  }, [learningData, grades, assignedStudent]);
 
   if (!assignedStudent) {
     return (
@@ -871,6 +1044,79 @@ export default function ParentStats() {
                 </div>
               )}
             </div>
+
+            {/* Sekcja ze wszystkimi odznakami ucznia */}
+            {topBadges.length > 0 && (
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-white/20 dark:border-gray-700 mt-8">
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-6 text-center flex items-center justify-center gap-3">
+                  <Trophy className="w-6 h-6 sm:w-7 sm:h-7 lg:w-8 lg:h-8 text-yellow-500" />
+                  Odznaki {assignedStudent?.name} ({topBadges.length} odznak)
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6 p-4 sm:p-6 lg:p-8">
+                  {topBadges.map((badge) => {
+                    const currentLevelData = badge.levels[badge.currentLevel];
+                    const nextLevelThreshold = badge.currentLevel < badge.levels.length - 1
+                      ? badge.levels[badge.currentLevel + 1].threshold
+                      : badge.levels[badge.currentLevel].threshold;
+                    const progressPercentage = badge.currentLevel < badge.levels.length - 1 && nextLevelThreshold > 0
+                      ? Math.min(100, (badge.currentProgress / nextLevelThreshold) * 100)
+                      : 100;
+                    return (
+                      <div
+                        key={badge.id}
+                        className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 lg:p-6 border-2 border-white/30 hover:border-white/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl`}
+                      >
+                        {/* Poziom odznaki */}
+                        <div className="absolute top-2 right-2">
+                          <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 backdrop-blur-sm">
+                            {currentLevelData.name}
+                          </div>
+                        </div>
+
+                        {/* Ikona */}
+                        <div className="flex justify-center mb-3">
+                          <div className="text-4xl lg:text-5xl">
+                            {badge.icon}
+                          </div>
+                        </div>
+
+                        {/* Nazwa */}
+                        <h4 className="text-base lg:text-lg font-bold text-white mb-2 text-center">
+                          {badge.name}
+                        </h4>
+
+                        {/* Poziom */}
+                        <p className="text-xs lg:text-sm text-white/90 text-center mb-3">
+                          Poziom {badge.currentLevel + 1} / {badge.levels.length}
+                        </p>
+
+                        {/* Pasek postępu */}
+                        {badge.currentLevel < badge.levels.length - 1 ? (
+                          <div className="space-y-2">
+                            <div className="w-full bg-white/20 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500 bg-white/40"
+                                style={{ width: `${progressPercentage}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-white/80 text-center">
+                              {Math.round(badge.currentProgress)} / {nextLevelThreshold}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="text-center">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 rounded-full">
+                              <Trophy className="w-3 h-3 text-yellow-300" />
+                              <span className="text-xs font-semibold text-white">Maksymalny poziom!</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

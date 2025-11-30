@@ -3,7 +3,7 @@
 // Force dynamic rendering to prevent SSR issues with client-side hooks
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Search, Star, BookOpen, UserPlus, Users, ArrowLeft, Grid3X3, List, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
@@ -47,7 +47,7 @@ interface UserData {
 export default function StudentsPage() {
   const router = useRouter();
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Zmieniono na false, bo fetchClasses ustawi loading
   const [searchTerm, setSearchTerm] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +75,23 @@ export default function StudentsPage() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
   const [showClassSelection, setShowClassSelection] = useState(true);
+  const selectedClassRef = useRef<Class | null>(null);
+  const fetchClassesCalledRef = useRef(false);
+  const fetchStudentsCalledRef = useRef<string | null>(null);
 
-  // 🆕 DEBUG - loguj zmiany stanu
+  // 🆕 DEBUG - loguj zmiany stanu (tylko raz na zmianę, nie na każdy render)
   useEffect(() => {
-    console.log('🔍 STATE DEBUG - showClassSelection changed:', showClassSelection);
-    console.log('🔍 STATE DEBUG - selectedClass changed:', selectedClass);
-    console.log('🔍 STATE DEBUG - classes changed:', classes.length, classes);
-  }, [showClassSelection, selectedClass, classes]);
+    console.log('🔍🔍🔍 STATE DEBUG - START 🔍🔍🔍');
+    console.log('🔍 STATE DEBUG - showClassSelection:', showClassSelection);
+    console.log('🔍 STATE DEBUG - selectedClass:', selectedClass);
+    console.log('🔍 STATE DEBUG - selectedClass?.name:', selectedClass?.name);
+    console.log('🔍 STATE DEBUG - selectedClass?.id:', selectedClass?.id);
+    console.log('🔍 STATE DEBUG - classes.length:', classes.length);
+    console.log('🔍 STATE DEBUG - students.length:', students.length);
+    console.log('🔍 STATE DEBUG - loading:', loading);
+    console.log('🔍🔍🔍 STATE DEBUG - KONIEC 🔍🔍🔍');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showClassSelection, selectedClass?.id, classes.length, students.length, loading]);
 
   // 🆕 NOWA FUNKCJA - pobieranie klas
   const fetchClasses = useCallback(async () => {
@@ -89,6 +99,16 @@ export default function StudentsPage() {
       console.error('❌ Brak użytkownika lub UID w fetchClasses');
       return;
     }
+    
+    // Zapobiegaj wielokrotnemu wywoływaniu - sprawdź PRZED ustawieniem flagi
+    const callId = `${user.uid}-${Date.now()}`;
+    if (fetchClassesCalledRef.current) {
+      console.log('⚠️ fetchClasses - już wywołane, pomijam. Current flag:', fetchClassesCalledRef.current);
+      return;
+    }
+    
+    fetchClassesCalledRef.current = callId;
+    console.log('✅ fetchClasses - ustawiam flagę:', callId);
     
     try {
       console.log('🔍 fetchClasses - START - pobieranie klas dla nauczyciela:', user.uid);
@@ -197,19 +217,37 @@ export default function StudentsPage() {
       // Jeśli nauczyciel ma tylko jedną klasę, automatycznie ją wybierz
       if (classesData.length === 1) {
         console.log('🔍 fetchClasses - automatyczny wybór jedynej klasy:', classesData[0].name);
+        selectedClassRef.current = classesData[0];
         setSelectedClass(classesData[0]);
         setShowClassSelection(false);
       } else if (classesData.length === 0) {
         console.log('⚠️ fetchClasses - nauczyciel nie ma żadnych klas!');
         setShowClassSelection(true); // Pokaż ekran wyboru klas (pusty)
       } else {
-        console.log('🔍 fetchClasses - nauczyciel ma wiele klas, pokazuję wybór');
-        setShowClassSelection(true);
+        console.log('🔍 fetchClasses - nauczyciel ma wiele klas');
+        // NIE resetuj showClassSelection jeśli klasa jest już wybrana
+        if (!selectedClassRef.current) {
+          console.log('🔍 fetchClasses - brak wybranej klasy, pokazuję wybór');
+          setShowClassSelection(true);
+        } else {
+          console.log('🔍 fetchClasses - klasa już wybrana, nie resetuję showClassSelection');
+        }
       }
     } catch (error) {
       console.error('❌ Error fetching classes:', error);
       console.error('❌ Error details:', error);
       setError(`Wystąpił błąd podczas pobierania klas: ${error instanceof Error ? error.message : String(error)}`);
+      fetchClassesCalledRef.current = false; // Resetuj flagę w przypadku błędu
+    } finally {
+      // Ustaw loading na false po zakończeniu fetchClasses
+      setLoading(false);
+      console.log('✅ fetchClasses - ustawiam loading na false');
+      
+      // Resetuj flagę po zakończeniu (po krótkim opóźnieniu, aby uniknąć race condition)
+      setTimeout(() => {
+        fetchClassesCalledRef.current = false;
+        console.log('🔄 fetchClasses - resetuję flagę po zakończeniu');
+      }, 1000);
     }
   }, [user]);
 
@@ -234,8 +272,16 @@ export default function StudentsPage() {
   }, [user]);
 
   const fetchStudents = useCallback(async () => {
+    console.log('📚📚📚 fetchStudents - START 📚📚📚');
+    console.log('📚 fetchStudents - user:', user);
+    console.log('📚 fetchStudents - user.uid:', user?.uid);
+    console.log('📚 fetchStudents - selectedClass:', selectedClass);
+    console.log('📚 fetchStudents - selectedClass?.name:', selectedClass?.name);
+    console.log('📚 fetchStudents - selectedClass?.id:', selectedClass?.id);
+    console.log('📚 fetchStudents - selectedClass?.students:', selectedClass?.students);
+    
     if (!user || !user.uid) {
-      console.error('❌ Brak użytkownika lub UID');
+      console.error('❌ fetchStudents - Brak użytkownika lub UID');
       setError('Brak danych użytkownika');
       setLoading(false);
       return;
@@ -243,12 +289,21 @@ export default function StudentsPage() {
     
     // Jeśli nie wybrano klasy, nie pobieraj uczniów
     if (!selectedClass) {
-      console.log('🔍 fetchStudents - brak wybranej klasy, pomijam pobieranie uczniów');
-        setStudents([]);
-        setLoading(false);
-        return;
-      }
+      console.log('⚠️ fetchStudents - brak wybranej klasy, pomijam pobieranie uczniów');
+      setStudents([]);
+      setLoading(false);
+      return;
+    }
+    
+    // Zapobiegaj wielokrotnemu wywoływaniu dla tej samej klasy
+    if (fetchStudentsCalledRef.current === selectedClass.id) {
+      console.log('⚠️ fetchStudents - już wywołane dla tej klasy, pomijam');
+      return;
+    }
+    
+    fetchStudentsCalledRef.current = selectedClass.id;
       
+    console.log('✅ fetchStudents - warunki spełnione, zaczynam pobieranie');
     setLoading(true);
     setError(null);
       
@@ -358,35 +413,73 @@ export default function StudentsPage() {
         }
       }
       
-      console.log('Processed students data:', studentsData);
+      console.log('📚 fetchStudents - Processed students data:', studentsData);
+      console.log('📚 fetchStudents - Liczba uczniów:', studentsData.length);
       setStudents(studentsData);
+      console.log('✅ fetchStudents - setStudents wywołane z', studentsData.length, 'uczniami');
       
     } catch (error) {
-      console.error('Error fetching students:', error);
+      console.error('❌ fetchStudents - Error fetching students:', error);
+      console.error('❌ fetchStudents - Error details:', JSON.stringify(error, null, 2));
       setError('Wystąpił błąd podczas pobierania danych uczniów.');
+      fetchStudentsCalledRef.current = null; // Resetuj flagę w przypadku błędu
     } finally {
+      console.log('📚 fetchStudents - finally - ustawiam loading na false');
       setLoading(false);
+      console.log('📚📚📚 fetchStudents - KONIEC 📚📚📚');
     }
   }, [user, selectedClass]);
 
   useEffect(() => {
     if (user && user.uid) {
-      console.log('🔍 useEffect - user changed, wywołuję fetchClasses, fetchStudents, fetchAllStudents');
-      fetchClasses();
-      fetchStudents();
-      fetchAllStudents();
+      console.log('🔍 useEffect - user changed, wywołuję fetchClasses, fetchAllStudents');
+      // Resetuj flagi przy zmianie użytkownika
+      fetchClassesCalledRef.current = false;
+      fetchStudentsCalledRef.current = null;
+      console.log('🔄 useEffect - zresetowano flagi');
+      
+      // NIE wywołuj fetchStudents tutaj - to jest obsługiwane przez useEffect [selectedClass]
+      // Użyj setTimeout, aby uniknąć wywołania dwa razy w React Strict Mode
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ useEffect - wywołuję fetchClasses po timeout');
+        fetchClasses();
+        fetchAllStudents();
+      }, 100);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        console.log('🧹 useEffect - cleanup timeout');
+      };
     } else {
       console.log('🔍 useEffect - brak użytkownika lub UID');
     }
-  }, [user, fetchAllStudents, fetchClasses, fetchStudents]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Aktualizuj ref gdy selectedClass się zmienia
+  useEffect(() => {
+    selectedClassRef.current = selectedClass;
+  }, [selectedClass]);
 
   // 🆕 NOWY useEffect - pobieranie uczniów gdy zmieni się wybrana klasa
   useEffect(() => {
+    console.log('🔍 useEffect [selectedClass] - START');
+    console.log('🔍 useEffect [selectedClass] - selectedClass:', selectedClass);
+    console.log('🔍 useEffect [selectedClass] - user:', user);
+    console.log('🔍 useEffect [selectedClass] - showClassSelection:', showClassSelection);
+    
     if (selectedClass && user) {
-      console.log('🔍 useEffect - selectedClass changed, wywołuję fetchStudents');
+      console.log('✅ useEffect [selectedClass] - warunki spełnione, wywołuję fetchStudents');
+      console.log('✅ useEffect [selectedClass] - klasa:', selectedClass.name, 'ID:', selectedClass.id);
       fetchStudents();
+    } else {
+      console.log('❌ useEffect [selectedClass] - warunki NIE spełnione');
+      if (!selectedClass) console.log('❌ Brak selectedClass');
+      if (!user) console.log('❌ Brak user');
     }
-  }, [selectedClass, user, fetchStudents]);
+    console.log('🔍 useEffect [selectedClass] - KONIEC');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClass, user]);
 
   const handleAssignStudents = async () => {
     if (selectedStudents.length === 0 || !user) return;
@@ -573,18 +666,47 @@ export default function StudentsPage() {
   const hasActiveFilters = searchTerm || filters.class || filters.gradeRange || filters.sortBy !== 'name' || filters.sortOrder !== 'asc';
 
   // 🆕 NOWE FUNKCJE - obsługa wyboru klasy
-  const handleClassSelect = (selectedClass: Class) => {
-    console.log('🔍 handleClassSelect - wybrano klasę:', selectedClass.name);
-    setSelectedClass(selectedClass);
-    setShowClassSelection(false);
-    // Wyczyść filtry gdy zmienia się klasa
-    setSearchTerm('');
-    setFilters({
-      class: '',
-      gradeRange: '',
-      sortBy: 'name',
-      sortOrder: 'asc'
-    });
+  const handleClassSelect = (classItem: Class) => {
+    console.log('🚀🚀🚀 handleClassSelect - START 🚀🚀🚀');
+    console.log('🚀 handleClassSelect - wybrano klasę:', classItem.name);
+    console.log('🚀 handleClassSelect - dane klasy:', JSON.stringify(classItem, null, 2));
+    console.log('🚀 handleClassSelect - przed setSelectedClass, selectedClass:', selectedClass);
+    console.log('🚀 handleClassSelect - przed setSelectedClass, showClassSelection:', showClassSelection);
+    
+    try {
+      selectedClassRef.current = classItem; // Ustaw ref PRZED setState
+      setSelectedClass(classItem);
+      console.log('✅ handleClassSelect - setSelectedClass wywołane');
+      
+      setShowClassSelection(false);
+      console.log('✅ handleClassSelect - setShowClassSelection(false) wywołane');
+      
+      // Wyczyść filtry gdy zmienia się klasa
+      setSearchTerm('');
+      setFilters({
+        class: '',
+        gradeRange: '',
+        sortBy: 'name',
+        sortOrder: 'asc'
+      });
+      console.log('✅ handleClassSelect - filtry wyczyszczone');
+      
+      // Wywołaj fetchStudents bezpośrednio (backup)
+      console.log('🚀 handleClassSelect - wywołuję fetchStudents bezpośrednio jako backup');
+      setTimeout(() => {
+        console.log('🚀 handleClassSelect - setTimeout - wywołuję fetchStudents');
+        if (classItem && user) {
+          fetchStudents();
+        } else {
+          console.log('❌ handleClassSelect - setTimeout - brak klasy lub użytkownika');
+        }
+      }, 200);
+      
+    } catch (error) {
+      console.error('❌ handleClassSelect - BŁĄD:', error);
+    }
+    
+    console.log('🚀🚀🚀 handleClassSelect - KONIEC 🚀🚀🚀');
   };
 
   const handleBackToClassSelection = () => {
@@ -738,8 +860,34 @@ export default function StudentsPage() {
                   {classes.map((classItem) => (
                     <div 
                       key={classItem.id}
-                      onClick={() => handleClassSelect(classItem)}
+                      onClick={(e) => {
+                        console.log('🖱️🖱️🖱️ KLIKNIĘCIE KARTY KLASY 🖱️🖱️🖱️');
+                        console.log('🖱️ Klasa:', classItem.name, 'ID:', classItem.id);
+                        console.log('🖱️ Event:', e);
+                        console.log('🖱️ Current target:', e.currentTarget);
+                        console.log('🖱️ Target:', e.target);
+                        
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        console.log('🖱️ Po preventDefault i stopPropagation');
+                        console.log('🖱️ Wywołuję handleClassSelect...');
+                        
+                        try {
+                          handleClassSelect(classItem);
+                          console.log('✅ handleClassSelect wywołane pomyślnie');
+                        } catch (error) {
+                          console.error('❌ Błąd w handleClassSelect:', error);
+                        }
+                      }}
+                      onMouseDown={(e) => {
+                        console.log('🖱️ onMouseDown - karta klasy:', classItem.name);
+                      }}
+                      onMouseUp={(e) => {
+                        console.log('🖱️ onMouseUp - karta klasy:', classItem.name);
+                      }}
                       className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden group cursor-pointer hover:border-blue-300"
+                      style={{ position: 'relative', zIndex: 1 }}
                     >
                       <div className="p-6">
                         <div className="flex items-start justify-between mb-4">

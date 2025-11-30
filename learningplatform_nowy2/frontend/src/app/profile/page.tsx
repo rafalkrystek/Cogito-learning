@@ -1,15 +1,15 @@
 "use client";
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import React, { useEffect, useState, useRef } from 'react';
-import { doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { doc, getDoc, updateDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db, storage } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Providers from '@/components/Providers';
 import ThemeToggle from '@/components/ThemeToggle';
 import Link from 'next/link';
-import { ArrowLeft, BarChart3, LogOut, Camera, User, Mail, GraduationCap, Shield, BookOpen, Award } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, Camera, User, Mail, GraduationCap, Shield, BookOpen, Award, Trophy } from 'lucide-react';
 
 function ProfilePageContent() {
   const router = useRouter();
@@ -26,6 +26,9 @@ function ProfilePageContent() {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef(null);
+  const [learningData, setLearningData] = useState<any>(null);
+  const [grades, setGrades] = useState<any[]>([]);
+  const [topBadges, setTopBadges] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -65,6 +68,211 @@ function ProfilePageContent() {
     };
     fetchUserData();
   }, [user]);
+
+  // Pobierz dane do obliczenia odznak
+  useEffect(() => {
+    const fetchBadgeData = async () => {
+      if (!user?.uid) return;
+
+      try {
+        // Pobierz dane nauki
+        const userTimeDoc = await getDoc(doc(db, 'userLearningTime', user.uid));
+        if (userTimeDoc.exists()) {
+          setLearningData(userTimeDoc.data());
+        }
+
+        // Pobierz oceny
+        const [gradesByUid, gradesByEmail, gradesByStudentId] = await Promise.all([
+          getDocs(query(collection(db, 'grades'), where('user_id', '==', user.uid), limit(100))),
+          user.email ? getDocs(query(collection(db, 'grades'), where('studentEmail', '==', user.email), limit(100))) : Promise.resolve({ docs: [] } as any),
+          getDocs(query(collection(db, 'grades'), where('studentId', '==', user.uid), limit(100)))
+        ]);
+
+        const allGrades = [
+          ...gradesByUid.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })),
+          ...gradesByEmail.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })),
+          ...gradesByStudentId.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }))
+        ];
+        const uniqueGrades = allGrades.filter((grade, index, self) =>
+          index === self.findIndex(g => g.id === grade.id)
+        );
+        setGrades(uniqueGrades);
+      } catch (error) {
+        console.error('Error fetching badge data:', error);
+      }
+    };
+
+    fetchBadgeData();
+  }, [user]);
+
+  // Oblicz odznaki
+  useEffect(() => {
+    if (!learningData && grades.length === 0) return;
+
+    const calculateBadges = () => {
+      const totalMinutes = learningData?.totalMinutes || 0;
+      const totalHours = totalMinutes / 60;
+      const daysActive = learningData ? Object.keys(learningData.dailyStats || {}).length : 0;
+      
+      // Oblicz średnią ocen
+      const normalizedGrades = grades.map(grade => {
+        let value = 0;
+        if (typeof grade.value === 'number') {
+          value = grade.value;
+        } else if (typeof grade.value_grade === 'number') {
+          value = grade.value_grade;
+        } else if (typeof grade.grade === 'number') {
+          value = grade.grade;
+        } else if (typeof grade.grade === 'string') {
+          value = parseFloat(grade.grade);
+        }
+        
+        // Jeśli mamy procent, skonwertuj na ocenę (1-5)
+        if (value === 0 && grade.percentage) {
+          const percentage = typeof grade.percentage === 'number' ? grade.percentage : parseFloat(String(grade.percentage));
+          if (percentage >= 90) value = 5;
+          else if (percentage >= 75) value = 4;
+          else if (percentage >= 60) value = 3;
+          else if (percentage >= 45) value = 2;
+          else value = 1;
+        }
+        
+        value = Math.max(1, Math.min(5, Math.round(value)));
+        return { ...grade, normalizedValue: value };
+      });
+      const averageGrade = normalizedGrades.length > 0 
+        ? normalizedGrades.reduce((acc, g) => acc + g.normalizedValue, 0) / normalizedGrades.length 
+        : 0;
+      const totalGrades = normalizedGrades.length;
+
+      // Oblicz streak
+      const calculateStreak = () => {
+        if (!learningData?.dailyStats) return 0;
+        const sortedDates = Object.keys(learningData.dailyStats)
+          .map(date => new Date(date))
+          .sort((a, b) => b.getTime() - a.getTime());
+        if (sortedDates.length === 0) return 0;
+        let streak = 1;
+        for (let i = 0; i < sortedDates.length - 1; i++) {
+          const current = new Date(sortedDates[i]);
+          current.setHours(0, 0, 0, 0);
+          const next = new Date(sortedDates[i + 1]);
+          next.setHours(0, 0, 0, 0);
+          const diffDays = Math.floor((current.getTime() - next.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays === 1) streak++;
+          else break;
+        }
+        return streak;
+      };
+
+      const streak = calculateStreak();
+      const calculateLevel = (value: number, thresholds: number[]): number => {
+        for (let i = thresholds.length - 1; i >= 0; i--) {
+          if (value >= thresholds[i]) return i;
+        }
+        return 0;
+      };
+
+      const badges = [
+        {
+          id: 'time-master',
+          name: 'Mistrz Czasu',
+          icon: '⏰',
+          currentLevel: calculateLevel(totalHours, [0, 10, 50, 100, 200]),
+          currentProgress: Math.round(totalHours),
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 50, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 100, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 200, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'discipline',
+          name: 'Dyscyplina',
+          icon: '🔥',
+          currentLevel: calculateLevel(streak, [0, 3, 7, 14, 30]),
+          currentProgress: streak,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 7, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 14, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 30, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'perfectionist',
+          name: 'Perfekcjonista',
+          icon: '⭐',
+          currentLevel: calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5]),
+          currentProgress: Math.round(averageGrade * 10) / 10,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 3.5, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 4, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 4.5, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'explorer',
+          name: 'Eksplorator',
+          icon: '🗺️',
+          currentLevel: calculateLevel(daysActive, [0, 5, 15, 30, 60]),
+          currentProgress: daysActive,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 60, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'scholar',
+          name: 'Uczony',
+          icon: '📚',
+          currentLevel: calculateLevel(totalGrades, [0, 5, 15, 30, 50]),
+          currentProgress: totalGrades,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 50, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'daily-learner',
+          name: 'Dzień po Dniu',
+          icon: '📅',
+          currentLevel: calculateLevel(
+            daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+            [0, 30, 60, 120, 180]
+          ),
+          currentProgress: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+          levels: [
+            { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 30, gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 60, gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 120, gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 180, gradient: 'from-blue-500 to-blue-600' }
+          ]
+        }
+      ];
+
+      // Posortuj według poziomu (najwyższe pierwsze) i weź 3 najlepsze
+      const sorted = badges
+        .sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress)
+        .slice(0, 3);
+      
+      setTopBadges(sorted);
+    };
+
+    calculateBadges();
+  }, [learningData, grades]);
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files || e.target.files.length === 0) return;
@@ -341,6 +549,61 @@ function ProfilePageContent() {
                 </div>
               </div>
 
+              {/* Sekcja z 3 najwyższymi odznakami */}
+              {topBadges.length > 0 && (
+                <div className="mt-8">
+                  <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                    <Trophy className="w-6 h-6 sm:w-7 sm:h-7 lg:w-8 lg:h-8 text-yellow-500" />
+                    Moje najwyższe odznaki
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
+                    {topBadges.map((badge) => {
+                      const currentLevelData = badge.levels[badge.currentLevel];
+                      return (
+                        <div
+                          key={badge.id}
+                          className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 lg:p-6 border-2 border-white/30 hover:border-white/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl`}
+                        >
+                          {/* Poziom odznaki */}
+                          <div className="absolute top-2 right-2">
+                            <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 backdrop-blur-sm">
+                              {currentLevelData.name}
+                            </div>
+                          </div>
+
+                          {/* Ikona */}
+                          <div className="flex justify-center mb-3">
+                            <div className="text-4xl lg:text-5xl">
+                              {badge.icon}
+                            </div>
+                          </div>
+
+                          {/* Nazwa */}
+                          <h4 className="text-base lg:text-lg font-bold text-white mb-1 text-center">
+                            {badge.name}
+                          </h4>
+
+                          {/* Poziom */}
+                          <p className="text-xs lg:text-sm text-white/90 text-center">
+                            Poziom {badge.currentLevel + 1} / {badge.levels.length}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Link do pełnych statystyk */}
+                  <div className="mt-6 text-center">
+                    <Link
+                      href="/profile/statistics"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+                    >
+                      <Trophy className="w-4 h-4" />
+                      <span className="font-semibold">Zobacz wszystkie odznaki</span>
+                    </Link>
+                  </div>
+                </div>
+              )}
               
             </div>
           </div>

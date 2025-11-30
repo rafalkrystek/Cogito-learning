@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/config/firebase';
-import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp, limit } from 'firebase/firestore';
 import { 
   ArrowLeft, 
   Mail, 
@@ -21,7 +21,8 @@ import {
   Activity,
   Target,
   Zap,
-  CheckCircle
+  CheckCircle,
+  Trophy
 } from 'lucide-react';
 
 interface StudentProfile {
@@ -63,52 +64,17 @@ export default function StudentProfilePage() {
   const params = useParams();
   const { user } = useAuth();
   const [student, setStudent] = useState<StudentProfile | null>(null);
-  const [, setGrades] = useState<Grade[]>([]);
   const [teacherNotes, setTeacherNotes] = useState<TeacherNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [, setEditData] = useState<Partial<StudentProfile>>({});
   const [newNote, setNewNote] = useState('');
   const [addingNote, setAddingNote] = useState(false);
+  const [learningData, setLearningData] = useState<any>(null);
+  const [grades, setGrades] = useState<any[]>([]);
+  const [badges, setBadges] = useState<any[]>([]);
 
   const studentId = params?.id as string;
-
-  // Mock achievements data
-  const [achievements] = useState([
-    {
-      id: 1,
-      title: 'Pierwszy krok',
-      description: 'Ukończyłeś swój pierwszy kurs',
-      icon: '🎯',
-      date: '2024-01-15',
-      progress: 100
-    },
-    {
-      id: 2,
-      title: 'Matematyczny geniusz',
-      description: 'Osiągnąłeś 100% w quizie z matematyki',
-      icon: '🧮',
-      date: '2024-02-20',
-      progress: 100
-    },
-    {
-      id: 3,
-      title: 'Aktywny uczeń',
-      description: 'Logowałeś się codziennie przez tydzień',
-      icon: '📚',
-      date: '2024-03-10',
-      progress: 100
-    }
-  ]);
-
-  // Mock stats data
-  const [stats] = useState({
-    totalCourses: 5,
-    completedCourses: 3,
-    averageGrade: 4.2,
-    totalHours: 45,
-    streak: 7
-  });
 
   const fetchStudentProfile = useCallback(async () => {
     try {
@@ -223,6 +189,231 @@ export default function StudentProfilePage() {
       setLoading(false);
     }
   }, [studentId, user]);
+
+  // Pobierz dane do obliczenia odznak
+  useEffect(() => {
+    const fetchBadgeData = async () => {
+      if (!studentId) return;
+
+      try {
+        // Pobierz dane nauki
+        const userTimeDoc = await getDoc(doc(db, 'userLearningTime', studentId));
+        if (userTimeDoc.exists()) {
+          setLearningData(userTimeDoc.data());
+        }
+
+        // Pobierz oceny
+        const studentDoc = await getDoc(doc(db, 'users', studentId));
+        const studentData = studentDoc.data();
+        const studentEmail = studentData?.email;
+
+        const [gradesByUid, gradesByEmail, gradesByStudentId] = await Promise.all([
+          getDocs(query(collection(db, 'grades'), where('user_id', '==', studentId), limit(100))),
+          studentEmail ? getDocs(query(collection(db, 'grades'), where('studentEmail', '==', studentEmail), limit(100))) : Promise.resolve({ docs: [] } as any),
+          getDocs(query(collection(db, 'grades'), where('studentId', '==', studentId), limit(100)))
+        ]);
+
+        const allGrades = [
+          ...gradesByUid.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })),
+          ...gradesByEmail.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })),
+          ...gradesByStudentId.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }))
+        ];
+        const uniqueGrades = allGrades.filter((grade, index, self) =>
+          index === self.findIndex(g => g.id === grade.id)
+        );
+        setGrades(uniqueGrades);
+      } catch (error) {
+        console.error('Error fetching badge data:', error);
+      }
+    };
+
+    fetchBadgeData();
+  }, [studentId]);
+
+  // Oblicz odznaki
+  useEffect(() => {
+    if (!learningData && grades.length === 0) {
+      setBadges([]);
+      return;
+    }
+
+    const calculateBadges = () => {
+      const totalMinutes = learningData?.totalMinutes || 0;
+      const totalHours = totalMinutes / 60;
+      const daysActive = learningData ? Object.keys(learningData.dailyStats || {}).length : 0;
+      
+      // Oblicz średnią ocen
+      const normalizedGrades = grades.map(grade => {
+        let value = 0;
+        if (typeof grade.value === 'number') {
+          value = grade.value;
+        } else if (typeof grade.value_grade === 'number') {
+          value = grade.value_grade;
+        } else if (typeof grade.grade === 'number') {
+          value = grade.grade;
+        } else if (typeof grade.grade === 'string') {
+          value = parseFloat(grade.grade);
+        }
+        
+        if (value === 0 && grade.percentage) {
+          const percentage = typeof grade.percentage === 'number' ? grade.percentage : parseFloat(String(grade.percentage));
+          if (percentage >= 90) value = 5;
+          else if (percentage >= 75) value = 4;
+          else if (percentage >= 60) value = 3;
+          else if (percentage >= 45) value = 2;
+          else value = 1;
+        }
+        
+        value = Math.max(1, Math.min(5, Math.round(value)));
+        return { ...grade, normalizedValue: value };
+      });
+      const averageGrade = normalizedGrades.length > 0 
+        ? normalizedGrades.reduce((acc, g) => acc + g.normalizedValue, 0) / normalizedGrades.length 
+        : 0;
+      const totalGrades = normalizedGrades.length;
+
+      // Oblicz streak
+      const calculateStreak = () => {
+        if (!learningData?.dailyStats) return 0;
+        const sortedDates = Object.keys(learningData.dailyStats)
+          .map(date => new Date(date))
+          .sort((a, b) => b.getTime() - a.getTime());
+        if (sortedDates.length === 0) return 0;
+        let streak = 1;
+        for (let i = 0; i < sortedDates.length - 1; i++) {
+          const current = new Date(sortedDates[i]);
+          current.setHours(0, 0, 0, 0);
+          const next = new Date(sortedDates[i + 1]);
+          next.setHours(0, 0, 0, 0);
+          const diffDays = Math.floor((current.getTime() - next.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays === 1) streak++;
+          else break;
+        }
+        return streak;
+      };
+
+      const streak = calculateStreak();
+      const calculateLevel = (value: number, thresholds: number[]): number => {
+        for (let i = thresholds.length - 1; i >= 0; i--) {
+          if (value >= thresholds[i]) return i;
+        }
+        return 0;
+      };
+
+      const calculatedBadges = [
+        {
+          id: 'time-master',
+          name: 'Mistrz Czasu',
+          description: 'Za całkowity czas spędzony na nauce',
+          icon: '⏰',
+          currentLevel: calculateLevel(totalHours, [0, 10, 50, 100, 200]),
+          currentProgress: Math.round(totalHours),
+          nextLevelThreshold: [10, 50, 100, 200, 500][Math.min(calculateLevel(totalHours, [0, 10, 50, 100, 200]) + 1, 4)] || 500,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 10, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 50, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 100, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 200, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'discipline',
+          name: 'Dyscyplina',
+          description: 'Za ciągłą aktywność - dni z rzędu',
+          icon: '🔥',
+          currentLevel: calculateLevel(streak, [0, 3, 7, 14, 30]),
+          currentProgress: streak,
+          nextLevelThreshold: [3, 7, 14, 30, 60][Math.min(calculateLevel(streak, [0, 3, 7, 14, 30]) + 1, 4)] || 60,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 7, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 14, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 30, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'perfectionist',
+          name: 'Perfekcjonista',
+          description: 'Za wysoką średnią ocen',
+          icon: '⭐',
+          currentLevel: calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5]),
+          currentProgress: Math.round(averageGrade * 10) / 10,
+          nextLevelThreshold: [3, 3.5, 4, 4.5, 5][Math.min(calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5]) + 1, 4)] || 5,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 3, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 3.5, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 4, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 4.5, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'explorer',
+          name: 'Eksplorator',
+          description: 'Za liczbę dni aktywności',
+          icon: '🗺️',
+          currentLevel: calculateLevel(daysActive, [0, 5, 15, 30, 60]),
+          currentProgress: daysActive,
+          nextLevelThreshold: [5, 15, 30, 60, 100][Math.min(calculateLevel(daysActive, [0, 5, 15, 30, 60]) + 1, 4)] || 100,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 60, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'scholar',
+          name: 'Uczony',
+          description: 'Za liczbę otrzymanych ocen',
+          icon: '📚',
+          currentLevel: calculateLevel(totalGrades, [0, 5, 15, 30, 50]),
+          currentProgress: totalGrades,
+          nextLevelThreshold: [5, 15, 30, 50, 100][Math.min(calculateLevel(totalGrades, [0, 5, 15, 30, 50]) + 1, 4)] || 100,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 5, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 15, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 30, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 50, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        },
+        {
+          id: 'daily-learner',
+          name: 'Dzień po Dniu',
+          description: 'Za regularność nauki - średni czas dziennie',
+          icon: '📅',
+          currentLevel: calculateLevel(
+            daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+            [0, 30, 60, 120, 180]
+          ),
+          currentProgress: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+          nextLevelThreshold: [30, 60, 120, 180, 240][Math.min(
+            calculateLevel(daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0, [0, 30, 60, 120, 180]) + 1,
+            4
+          )] || 240,
+          levels: [
+            { name: 'Brąz', threshold: 0, color: 'bg-amber-700', gradient: 'from-amber-700 to-amber-800' },
+            { name: 'Srebro', threshold: 30, color: 'bg-gray-400', gradient: 'from-gray-400 to-gray-500' },
+            { name: 'Złoto', threshold: 60, color: 'bg-yellow-500', gradient: 'from-yellow-500 to-yellow-600' },
+            { name: 'Platyna', threshold: 120, color: 'bg-cyan-400', gradient: 'from-cyan-400 to-cyan-500' },
+            { name: 'Diament', threshold: 180, color: 'bg-blue-500', gradient: 'from-blue-500 to-blue-600' }
+          ]
+        }
+      ];
+
+      // Posortuj według poziomu (najwyższe pierwsze)
+      const sorted = calculatedBadges
+        .sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress);
+      
+      setBadges(sorted);
+    };
+
+    calculateBadges();
+  }, [learningData, grades]);
 
   const fetchTeacherNotes = useCallback(async () => {
     try {
@@ -373,7 +564,9 @@ export default function StudentProfilePage() {
                       <Activity className="w-4 h-4 text-purple-600" />
                       <span className="text-sm font-medium text-purple-800">Aktywność</span>
                     </div>
-                    <div className="text-lg font-bold text-purple-900">{stats.streak} dni</div>
+                    <div className="text-lg font-bold text-purple-900">
+                      {learningData ? Object.keys(learningData.dailyStats || {}).length : 0} dni
+                    </div>
                   </div>
                 </div>
 
@@ -497,39 +690,88 @@ export default function StudentProfilePage() {
                   </div>
                 </div>
 
-                {/* Osiągnięcia */}
+                {/* Odznaki */}
                 <div className="mb-8">
                   <div className="flex items-center gap-3 mb-4">
-                    <Award className="w-6 h-6 text-yellow-500" />
-                    <h3 className="text-xl font-semibold text-gray-900">Ostatnie osiągnięcia ({achievements.length})</h3>
+                    <Trophy className="w-6 h-6 text-yellow-500" />
+                    <h3 className="text-xl font-semibold text-gray-900">Odznaki ({badges.length})</h3>
                   </div>
                   
-                  <div className="space-y-4">
-                    {achievements.map((achievement) => (
-                      <div key={achievement.id} className="group flex items-start gap-4 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl hover:from-blue-50 hover:to-purple-50 transition-all duration-300 hover:shadow-md hover:scale-[1.02] border border-gray-200 hover:border-blue-300">
-                        <div className="text-3xl group-hover:animate-bounce">{achievement.icon}</div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{achievement.title}</h4>
-                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  {badges.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {badges.map((badge) => {
+                        const currentLevelData = badge.levels[badge.currentLevel];
+                        const progressPercentage = badge.nextLevelThreshold > 0 
+                          ? Math.min(100, (badge.currentProgress / badge.nextLevelThreshold) * 100)
+                          : 100;
+                        return (
+                          <div
+                            key={badge.id}
+                            className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 border-2 border-white/30 hover:border-white/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl`}
+                          >
+                            {/* Poziom odznaki */}
+                            <div className="absolute top-2 right-2">
+                              <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 backdrop-blur-sm">
+                                {currentLevelData.name}
+                              </div>
+                            </div>
+
+                            {/* Ikona */}
+                            <div className="flex justify-center mb-3">
+                              <div className="text-4xl">
+                                {badge.icon}
+                              </div>
+                            </div>
+
+                            {/* Nazwa */}
+                            <h4 className="text-base font-bold text-white mb-1 text-center">
+                              {badge.name}
+                            </h4>
+
+                            {/* Opis */}
+                            <p className="text-xs text-white/90 text-center mb-2">
+                              {badge.description}
+                            </p>
+
+                            {/* Poziom */}
+                            <p className="text-xs text-white/80 text-center mb-2">
+                              Poziom {badge.currentLevel + 1} / {badge.levels.length}
+                            </p>
+
+                            {/* Pasek postępu */}
+                            {badge.currentLevel < badge.levels.length - 1 ? (
+                              <div className="space-y-1">
+                                <div className="w-full bg-white/20 rounded-full h-1.5 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full transition-all duration-500 bg-white/40"
+                                    style={{ width: `${progressPercentage}%` }}
+                                  />
+                                </div>
+                                <p className="text-xs text-white/80 text-center">
+                                  {Math.round(badge.currentProgress)} / {badge.nextLevelThreshold}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="text-center">
+                                <div className="inline-flex items-center gap-1 px-2 py-1 bg-white/20 rounded-full">
+                                  <Trophy className="w-3 h-3 text-yellow-300" />
+                                  <span className="text-xs font-semibold text-white">Maksymalny poziom!</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                          <p className="text-gray-600 text-sm mb-2">{achievement.description}</p>
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <Calendar className="w-3 h-3" />
-                            <span>{new Date(achievement.date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '/')}</span>
-                          </div>
-                          <div className="mt-2 w-8 h-1 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full"></div>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    <button className="w-full text-center py-3 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors font-medium">
-                      Zobacz wszystkie osiągnięcia
-                    </button>
-                  </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <Trophy className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                      <p className="text-sm">Brak odznak - uczeń jeszcze nie ma wystarczających danych</p>
+                    </div>
+                  )}
                 </div>
 
-                {/* Statystyki nauczyciela */}
+                {/* Statystyki ucznia */}
                 <div className="mb-8">
                   <h3 className="text-xl font-semibold text-gray-900 mb-4">Statystyki ucznia</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -537,7 +779,7 @@ export default function StudentProfilePage() {
                       <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:animate-bounce">
                         <BookOpen className="w-6 h-6 text-white" />
                       </div>
-                      <div className="text-3xl font-bold text-blue-600 mb-1">{stats.totalCourses}</div>
+                      <div className="text-3xl font-bold text-blue-600 mb-1">{student.courses.length}</div>
                       <div className="text-sm text-gray-600 mb-1">Kursy</div>
                       <div className="flex items-center justify-center gap-1 text-xs text-blue-600">
                         <TrendingUp className="w-3 h-3" />
@@ -549,11 +791,13 @@ export default function StudentProfilePage() {
                       <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:animate-bounce">
                         <CheckCircle className="w-6 h-6 text-white" />
                       </div>
-                      <div className="text-3xl font-bold text-green-600 mb-1">{stats.completedCourses}</div>
-                      <div className="text-sm text-gray-600 mb-1">Ukończone</div>
+                      <div className="text-3xl font-bold text-green-600 mb-1">
+                        {learningData ? Math.round(learningData.totalMinutes / 60) : 0}
+                      </div>
+                      <div className="text-sm text-gray-600 mb-1">Godziny nauki</div>
                       <div className="flex items-center justify-center gap-1 text-xs text-green-600">
                         <Activity className="w-3 h-3" />
-                        <span>Postęp</span>
+                        <span>Łącznie</span>
                       </div>
                     </div>
 
@@ -561,7 +805,7 @@ export default function StudentProfilePage() {
                       <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:animate-bounce">
                         <Star className="w-6 h-6 text-white" />
                       </div>
-                      <div className="text-3xl font-bold text-purple-600 mb-1">{stats.averageGrade}</div>
+                      <div className="text-3xl font-bold text-purple-600 mb-1">{student.averageGrade.toFixed(1)}</div>
                       <div className="text-sm text-gray-600 mb-1">Średnia</div>
                       <div className="flex items-center justify-center gap-1 text-xs text-purple-600">
                         <Target className="w-3 h-3" />
@@ -573,11 +817,13 @@ export default function StudentProfilePage() {
                       <div className="w-12 h-12 bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:animate-bounce">
                         <Zap className="w-6 h-6 text-white" />
                       </div>
-                      <div className="text-3xl font-bold text-yellow-600 mb-1">{stats.streak}</div>
-                      <div className="text-sm text-gray-600 mb-1">Dni z rzędu</div>
+                      <div className="text-3xl font-bold text-yellow-600 mb-1">
+                        {learningData ? Object.keys(learningData.dailyStats || {}).length : 0}
+                      </div>
+                      <div className="text-sm text-gray-600 mb-1">Dni aktywności</div>
                       <div className="flex items-center justify-center gap-1 text-xs text-yellow-600">
                         <Activity className="w-3 h-3" />
-                        <span>Streak</span>
+                        <span>Aktywność</span>
                       </div>
                     </div>
                   </div>
