@@ -74,7 +74,7 @@ function StudentCoursesContent() {
             subject: course.subject || 'Brak przedmiotu',
             yearOfStudy: course.year_of_study || 1,
             isActive: course.is_active !== false,
-            teacherName: course.teacherName || course.created_by || 'Nieznany nauczyciel',
+            teacherName: course.instructor_name || course.teacherName || course.teacherEmail || course.created_by || 'Nieznany nauczyciel',
             progress: course.progress || 0,
             lastAccessed: course.lastAccessed || course.updated_at || new Date().toISOString(),
             totalLessons: course.totalLessons || 0,

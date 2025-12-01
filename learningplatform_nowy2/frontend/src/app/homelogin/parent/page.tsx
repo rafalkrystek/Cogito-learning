@@ -318,32 +318,6 @@ export default function ParentDashboard() {
           )}
 
           <div className="w-full">
-            {/* Enhanced Navigation Header */}
-            <div className="flex items-center justify-center gap-3 mb-4 sm:mb-8 p-3 sm:p-6 bg-gradient-to-r from-slate-50 to-blue-50 rounded-2xl border border-slate-200/50">
-              <button 
-                onClick={prevWeek} 
-                className="p-2 sm:p-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 shadow-md flex-shrink-0 flex items-center justify-center"
-              >
-                <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6" />
-              </button>
-              
-              <div className="text-center flex-1 px-2 flex flex-col items-center justify-center">
-                <div className="font-bold text-slate-900 text-base sm:text-2xl mb-1 sm:mb-2">
-                  {monthsPl[currentWeek.getMonth()]} {currentWeek.getFullYear()}
-                </div>
-                <div className="text-xs sm:text-sm text-slate-600 bg-white px-3 sm:px-6 py-1.5 sm:py-3 rounded-full shadow-sm border border-slate-200">
-                  {formatDateRange(currentWeek)}
-                </div>
-              </div>
-              
-              <button 
-                onClick={nextWeek} 
-                className="p-2 sm:p-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 shadow-md flex-shrink-0 flex items-center justify-center"
-              >
-                <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6" />
-              </button>
-            </div>
-
             {/* Desktop View - Schedule Grid - Zmniejszona rozdzielczość */}
             <div className="hidden md:block w-full border border-slate-200 rounded-3xl overflow-hidden shadow-xl bg-white">
               <div className="grid grid-cols-6" style={{ maxHeight: 'calc(100vh - 250px)', fontSize: '0.75rem' }}>

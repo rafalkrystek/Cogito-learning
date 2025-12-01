@@ -346,8 +346,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       throw new Error('Twoje konto oczekuje na zatwierdzenie przez administratora.');
     }
 
-    // Ustaw custom claims w Firebase Auth jeśli rola jest teacher/admin
-    if (userData.role === 'teacher' || userData.role === 'admin') {
+    // Ustaw custom claims w Firebase Auth jeśli rola jest teacher/admin/parent
+    if (userData.role === 'teacher' || userData.role === 'admin' || userData.role === 'parent') {
       try {
         // Dodaj timeout dla API call - maksymalnie 5 sekund (więcej czasu na produkcję)
         const controller = new AbortController();
@@ -385,8 +385,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     // Zapisz token JWT do sessionStorage (bezpieczniejsze niż localStorage)
-    // Użyj forceRefresh jeśli rola to admin/teacher, aby mieć pewność że mamy najnowsze custom claims
-    const forceRefresh = userData.role === 'admin' || userData.role === 'teacher';
+    // Użyj forceRefresh jeśli rola to admin/teacher/parent, aby mieć pewność że mamy najnowsze custom claims
+    const forceRefresh = userData.role === 'admin' || userData.role === 'teacher' || userData.role === 'parent';
     const token = await user.getIdToken(forceRefresh);
     console.log('Pobrany token:', token.substring(0, 20) + '...');
     sessionStorage.setItem('firebaseToken', token);

@@ -173,7 +173,9 @@ function ParentCoursesContent() {
 
               // Pobierz dane nauczyciela
               let teacherName = 'Nieznany nauczyciel';
-              if (course.teacher) {
+              if (course.instructor_name) {
+                teacherName = course.instructor_name;
+              } else if (course.teacher) {
                 try {
                   const teacherDoc = await getDoc(doc(db, 'users', course.teacher));
                   if (teacherDoc.exists()) {
@@ -185,6 +187,8 @@ function ParentCoursesContent() {
                 }
               } else if (course.teacherName) {
                 teacherName = course.teacherName;
+              } else if (course.teacherEmail) {
+                teacherName = course.teacherEmail;
               } else if (course.created_by) {
                 teacherName = course.created_by;
               }

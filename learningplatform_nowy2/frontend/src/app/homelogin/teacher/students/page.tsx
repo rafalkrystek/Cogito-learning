@@ -775,17 +775,6 @@ export default function StudentsPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              {/* Powrót do klas - pokazuj tylko gdy nie jesteśmy w wyborze klas */}
-              {!showClassSelection && selectedClass && (
-                <button
-                  onClick={handleBackToClassSelection}
-                  className="flex items-center gap-3 px-5 py-3 bg-white/70 backdrop-blur-sm text-gray-700 rounded-xl hover:bg-white hover:shadow-lg transition-all duration-300 ease-in-out border border-white/30 hover:border-blue-200 group"
-                >
-                  <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-                  <span className="font-medium">Powrót do klas</span>
-                </button>
-              )}
-
               {/* View Mode Toggle - pokazuj tylko gdy nie jesteśmy w wyborze klas */}
               {!showClassSelection && (
               <div className="flex items-center bg-white/70 backdrop-blur-sm rounded-xl border border-white/30 p-1">

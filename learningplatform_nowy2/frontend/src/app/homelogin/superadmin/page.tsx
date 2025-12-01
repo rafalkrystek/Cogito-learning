@@ -26,7 +26,8 @@ import {
   Filter,
   RefreshCw,
   Menu,
-  X
+  X,
+  Search
 } from 'lucide-react';
 
 // Typ użytkownika Firestore
@@ -134,6 +135,8 @@ function SuperAdminDashboardContent() {
   const [editCourseStudents, setEditCourseStudents] = useState<string[]>([]);
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -1102,484 +1105,414 @@ function SuperAdminDashboardContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden">
-      {/* Header z przyciskiem powrotu - Responsywny */}
-      <div className="bg-white/90 backdrop-blur-lg border-b border-gray-200 shadow-sm sticky top-0 z-40">
-        <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
-          <div className="flex items-center justify-between gap-4">
-            {/* Lewa strona - Logo */}
-            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <Image src="/puzzleicon.png" alt="Logo" width={28} height={28} className="flex-shrink-0" />
-                <span className="text-lg sm:text-xl font-bold text-[#4067EC] truncate">COGITO</span>
-              </div>
+    <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 w-full overflow-x-hidden">
+      {/* Top Navigation Bar */}
+      <div className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-white/10 backdrop-blur-xl border-b border-gray-200 dark:border-white/20 z-50 flex items-center justify-between px-4 lg:px-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="lg:hidden p-2 rounded-lg bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 transition-colors"
+          >
+            <Menu className="w-6 h-6 text-gray-700 dark:text-white" />
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#4067EC] rounded-xl flex items-center justify-center shadow-md">
+              <Shield className="w-6 h-6 text-white" />
             </div>
-
-            {/* Prawa strona - User info i akcje */}
-            <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
-              <span className="hidden sm:inline text-sm text-gray-600">Super Administrator</span>
-              <div className="relative">
-                <ThemeToggle />
-              </div>
-              <Link 
-                href="/login" 
-                className="px-3 py-2 text-sm text-[#4067EC] hover:bg-blue-50 rounded-lg transition-colors font-medium"
-              >
-                <span className="hidden sm:inline">Wyloguj</span>
-                <span className="sm:hidden">Exit</span>
-              </Link>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 dark:text-white">Panel Administratora</h1>
+              <p className="text-xs text-gray-600 dark:text-white/70">Zarządzanie systemem</p>
             </div>
           </div>
         </div>
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex items-center gap-3 px-4 py-2 bg-gray-100 dark:bg-white/10 rounded-lg backdrop-blur-sm">
+            <div className="w-8 h-8 bg-[#4067EC] rounded-full flex items-center justify-center">
+              <span className="text-white text-sm font-bold">
+                {(user as any)?.displayName?.[0] || user?.email?.[0] || 'A'}
+              </span>
+            </div>
+            <div className="hidden md:block">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                {(user as any)?.displayName || user?.email?.split('@')[0] || 'Administrator'}
+              </p>
+              <p className="text-xs text-gray-600 dark:text-white/70">Super Admin</p>
+            </div>
+          </div>
+          <ThemeToggle />
+          <Link 
+            href="/login" 
+            className="px-4 py-2 bg-red-500 hover:bg-red-600 dark:bg-red-500/20 dark:hover:bg-red-500/30 text-white dark:text-red-200 rounded-lg transition-colors font-medium border border-red-500 dark:border-red-500/30"
+          >
+            <span className="hidden sm:inline">Wyloguj</span>
+            <span className="sm:hidden">Exit</span>
+          </Link>
+        </div>
       </div>
 
-      {/* Main Content - Responsywny padding z max-width i jednakową szerokością */}
-      <main className="w-full max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 box-border">
-        {/* Header z powitaniem - Responsywny */}
-        <div className="mb-6 sm:mb-8">
-          <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold mb-2 sm:mb-4 text-gray-900">
-            Witaj z powrotem, <span className="text-[#4067EC]">{(user as any)?.displayName || user?.email?.split('@')[0] || 'Administratorze'}</span>!
-          </h2>
-          <p className="text-sm sm:text-base text-gray-600">
-            Przegląd systemu edukacyjnego i zarządzanie użytkownikami
-          </p>
-        </div>
-
-        {/* Karty statystyk - Responsywne */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {statCards.map((stat, index) => {
-            const Icon = stat.icon;
-            return (
-              <div 
-                key={index} 
-                className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow duration-200"
-              >
-                <div className="flex items-center justify-between mb-3 sm:mb-4">
-                  <h3 className="text-xs sm:text-sm font-medium text-gray-500 truncate pr-2">{stat.title}</h3>
-                  <div className={`p-2 sm:p-2.5 rounded-lg ${stat.color} flex-shrink-0`}>
-                    <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
-                  </div>
-                </div>
-                <div className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-1">{stat.value}</div>
-                <p className="text-xs text-gray-600 flex items-center">
-                  {stat.trend === "up" && <TrendingUp className="inline h-3 w-3 mr-1 text-green-500 flex-shrink-0" />}
-                  <span className="truncate">{stat.description}</span>
-                </p>
-              </div>
-            );
-          })}
-        </div>
-
-
-
-        {/* Główny layout z zakładkami po lewej i akcjami po prawej - jednakowa szerokość */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 w-full max-w-full">
-          {/* Lewa strona - zakładki i zawartość */}
-          <div className="lg:col-span-3 w-full max-w-full overflow-hidden">
-            {/* Tabs - Responsywne z mobile menu */}
-            <div className="mb-6 sm:mb-8">
-              {/* Mobile Menu Button */}
-              <div className="lg:hidden mb-4">
+      {/* Sidebar Navigation */}
+      <aside className={`fixed top-16 left-0 h-[calc(100vh-4rem)] w-72 bg-white dark:bg-white/5 backdrop-blur-2xl border-r border-gray-200 dark:border-white/10 z-40 transition-transform duration-300 lg:translate-x-0 ${
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="p-6 h-full overflow-y-auto">
+          <nav className="space-y-2">
+            {[
+              { id: "users", label: "Użytkownicy", icon: Users, color: "bg-[#4067EC]" },
+              { id: "pending", label: `Oczekujący (${users.filter(u => !u.approved).length})`, icon: Clock, color: "bg-yellow-500" },
+              { id: "groups", label: "Grupy", icon: Group, color: "bg-purple-500" },
+              { id: "courses", label: "Kursy", icon: BookOpen, color: "bg-green-500" },
+              { id: "assignments", label: "Przypisania", icon: ClipboardList, color: "bg-indigo-500" },
+              { id: "bug-reports", label: "Zgłoszenia błędów", icon: Bug, color: "bg-red-500" },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
                 <button
-                  onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors w-full justify-between"
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group ${
+                    isActive
+                      ? `${tab.color} text-white shadow-md scale-105`
+                      : 'bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 hover:scale-102'
+                  }`}
                 >
-                  <span className="font-medium">
-                    {activeTab === "users" && "User Management"}
-                    {activeTab === "pending" && `Pending Users (${users.filter(u => !u.approved).length})`}
-                    {activeTab === "groups" && "Group Management"}
-                    {activeTab === "courses" && "Course Management"}
-                    {activeTab === "assignments" && "Course Assignments"}
-                    {activeTab === "bug-reports" && "Zgłoszenia błędów"}
-                  </span>
-                  {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-                </button>
-                
-                {/* Mobile Dropdown Menu */}
-                {mobileMenuOpen && (
-                  <div className="mt-2 bg-white rounded-lg border border-gray-200 shadow-lg overflow-hidden">
-                    {[
-                      { id: "users", label: "User Management", icon: Users },
-                      { id: "pending", label: `Pending Users (${users.filter(u => !u.approved).length})`, icon: Clock },
-                      { id: "groups", label: "Group Management", icon: Group },
-                      { id: "courses", label: "Course Management", icon: BookOpen },
-                      { id: "assignments", label: "Course Assignments", icon: ClipboardList },
-                      { id: "bug-reports", label: "Zgłoszenia błędów", icon: Bug },
-                    ].map((tab) => {
-                      const Icon = tab.icon;
-                      return (
-                        <button
-                          key={tab.id}
-                          onClick={() => {
-                            setActiveTab(tab.id);
-                            setMobileMenuOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${
-                            activeTab === tab.id ? "bg-blue-50 text-[#4067EC] border-l-4 border-[#4067EC]" : "text-gray-700"
-                          }`}
-                        >
-                          <Icon className="w-5 h-5 flex-shrink-0" />
-                          <span className="font-medium">{tab.label}</span>
-                        </button>
-                      );
-                    })}
-                    <Link
-                      href="/homelogin/superadmin/parent-student"
-                      className="flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors text-gray-700 border-t border-gray-200"
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      <UserPlus className="w-5 h-5 flex-shrink-0" />
-                      <span className="font-medium">Rodzic-Uczeń</span>
-                    </Link>
+                  <div className={`p-2 rounded-lg ${isActive ? 'bg-white/20' : 'bg-gray-200 dark:bg-white/10 group-hover:bg-gray-300 dark:group-hover:bg-white/20'} transition-colors`}>
+                    <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-600 dark:text-white/70 group-hover:text-gray-800 dark:group-hover:text-white'} transition-colors`} />
                   </div>
-                )}
+                  <span className={`font-medium ${isActive ? 'text-white' : 'text-gray-600 dark:text-white/70 group-hover:text-gray-800 dark:group-hover:text-white'} transition-colors`}>
+                    {tab.label}
+                  </span>
+                  {isActive && (
+                    <div className="ml-auto w-2 h-2 bg-white rounded-full animate-pulse" />
+                  )}
+                </button>
+              );
+            })}
+            <Link
+              href="/homelogin/superadmin/parent-student"
+              className="w-full flex items-center gap-4 px-4 py-3 rounded-xl bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 transition-all duration-200 group hover:scale-102"
+            >
+              <div className="p-2 rounded-lg bg-gray-200 dark:bg-white/10 group-hover:bg-gray-300 dark:group-hover:bg-white/20 transition-colors">
+                <UserPlus className="w-5 h-5 text-gray-700 dark:text-white/70 group-hover:text-gray-900 dark:group-hover:text-white transition-colors" />
               </div>
+              <span className="font-medium text-gray-700 dark:text-white/70 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
+                Rodzic-Uczeń
+              </span>
+            </Link>
+          </nav>
+        </div>
+      </aside>
 
-              {/* Desktop Tabs */}
-              <div className="hidden lg:block border-b border-gray-200">
-                <nav className="-mb-px flex space-x-6 overflow-x-auto">
+      {/* Main Content */}
+      <main className={`pt-20 transition-all duration-300 lg:pl-72`}>
+        <div className="p-4 sm:p-6 lg:p-8">
+          {/* Welcome Header */}
+          <div className="mb-8">
+            <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 dark:from-blue-600/20 dark:via-purple-600/20 dark:to-pink-600/20 backdrop-blur-xl rounded-3xl p-8 border border-gray-200 dark:border-white/20 shadow-2xl">
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-2">
+                    Witaj, <span className="text-[#4067EC] dark:text-blue-400">
+                      {(user as any)?.displayName || user?.email?.split('@')[0] || 'Administratorze'}
+                    </span>!
+                  </h1>
+                  <p className="text-gray-700 dark:text-white/80 text-lg">
+                    Zarządzaj całym systemem edukacyjnym z jednego miejsca
+                  </p>
+                </div>
+                <div className="flex gap-3">
                   <button
-                    onClick={() => setActiveTab("users")}
-                    className={`${
-                      activeTab === "users"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
+                    onClick={() => setShowCreateUserModal(true)}
+                    className="px-6 py-3 bg-[#4067EC] hover:bg-[#3155d4] text-white rounded-xl font-semibold hover:shadow-lg hover:scale-105 transition-all duration-200 flex items-center gap-2"
                   >
-                    User Management
+                    <UserPlus className="w-5 h-5" />
+                    <span className="hidden sm:inline">Dodaj użytkownika</span>
+                    <span className="sm:hidden">Dodaj</span>
                   </button>
-                  <button
-                    onClick={() => setActiveTab("pending")}
-                    className={`${
-                      activeTab === "pending"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-                  >
-                    Pending Users ({users.filter(u => !u.approved).length})
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("groups")}
-                    className={`${
-                      activeTab === "groups"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-                  >
-                    Group Management
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("courses")}
-                    className={`${
-                      activeTab === "courses"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-                  >
-                    Course Management
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("assignments")}
-                    className={`${
-                      activeTab === "assignments"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-                  >
-                    Course Assignments
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("bug-reports")}
-                    className={`${
-                      activeTab === "bug-reports"
-                        ? "border-[#4067EC] text-[#4067EC]"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors`}
-                  >
-                    <Bug className="w-4 h-4" />
-                    Zgłoszenia błędów
-                  </button>
-                  <Link
-                    href="/homelogin/superadmin/parent-student"
-                    className={`border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-                  >
-                    Rodzic-Uczeń
-                  </Link>
-                </nav>
+                </div>
               </div>
             </div>
+          </div>
 
-            {/* Content based on active tab */}
-            {activeTab === "users" && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden w-full">
-                <div className="p-4 sm:p-6">
+          {/* Stat Cards - Stonowane kolory */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {statCards.map((stat, index) => {
+              const Icon = stat.icon;
+              return (
+                <div 
+                  key={index} 
+                  className="group relative bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.02]"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">{stat.title}</h3>
+                    <div className={`p-3 ${stat.color} rounded-lg`}>
+                      <Icon className="h-5 w-5 text-white" />
+                    </div>
+                  </div>
+                  <div className="text-3xl font-bold text-gray-900 dark:text-white mb-2">{stat.value}</div>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center">
+                    {stat.trend === "up" && <TrendingUp className="inline h-4 w-4 mr-1 text-green-500" />}
+                    {stat.description}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+
+
+          {/* Content based on active tab */}
+          {activeTab === "users" && (
+              <div className="bg-white dark:bg-white/10 backdrop-blur-xl rounded-3xl border border-gray-200 dark:border-white/20 shadow-2xl overflow-hidden">
+                <div className="p-6 lg:p-8">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                    <h2 className="text-lg sm:text-xl font-semibold text-gray-800">User Management</h2>
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Zarządzanie użytkownikami</h2>
+                      <p className="text-gray-600 dark:text-white/70">Zarządzaj wszystkimi użytkownikami systemu</p>
+                    </div>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
-                      <div className="text-xs sm:text-sm text-gray-600 text-center sm:text-left">
-                        <span className="font-medium text-green-600">{users.filter(u => u.approved).length}</span> zatwierdzonych, 
-                        <span className="font-medium text-yellow-600"> {users.filter(u => !u.approved).length}</span> oczekuje
+                      <div className="text-xs sm:text-sm text-gray-600 dark:text-white/70 text-center sm:text-left">
+                        <span className="font-medium text-green-600 dark:text-green-300">{users.filter(u => u.approved).length}</span> zatwierdzonych, 
+                        <span className="font-medium text-yellow-600 dark:text-yellow-300"> {users.filter(u => !u.approved).length}</span> oczekuje
                       </div>
                       <button 
                         onClick={() => setShowCreateUserModal(true)}
-                        className="bg-[#4067EC] text-white px-4 py-2 rounded-lg hover:bg-[#3155d4] transition-colors text-sm font-medium flex items-center justify-center gap-2"
+                        className="bg-[#4067EC] hover:bg-[#3155d4] text-white px-6 py-3 rounded-xl hover:shadow-lg hover:scale-105 transition-all duration-200 font-semibold flex items-center justify-center gap-2"
                       >
-                        <Plus className="w-4 h-4" />
-                        <span>Add New User</span>
+                        <Plus className="w-5 h-5" />
+                        <span>Dodaj użytkownika</span>
                       </button>
                     </div>
                   </div>
+                  
+                  {/* Wyszukiwarka */}
+                  <div className="mb-6">
+                    <div className="relative">
+                      <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-white/50" />
+                      <input
+                        type="text"
+                        placeholder="Wyszukaj użytkownika po imieniu, nazwisku lub emailu..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-white/10 backdrop-blur-sm border border-gray-300 dark:border-white/20 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                      />
+                      {searchTerm && (
+                        <button
+                          onClick={() => setSearchTerm("")}
+                          className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-white/50 hover:text-gray-600 dark:hover:text-white transition-colors"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {success && (
-                    <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+                    <div className="mb-4 bg-green-100 dark:bg-green-500/20 border border-green-300 dark:border-green-500/50 text-green-800 dark:text-green-200 px-4 py-3 rounded-xl text-sm backdrop-blur-sm">
                       {success}
                     </div>
                   )}
                   {error && (
-                    <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                    <div className="mb-4 bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 text-red-800 dark:text-red-200 px-4 py-3 rounded-xl text-sm backdrop-blur-sm">
                       {error}
                     </div>
                   )}
                   {resetPasswordSuccess && (
-                    <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+                    <div className="mb-4 bg-green-100 dark:bg-green-500/20 border border-green-300 dark:border-green-500/50 text-green-800 dark:text-green-200 px-4 py-3 rounded-xl text-sm backdrop-blur-sm">
                       {resetPasswordSuccess}
                     </div>
                   )}
-                  {/* Responsywna tabela - mobile: cards, desktop: table */}
-                  <div className="hidden md:block overflow-x-auto -mx-4 sm:mx-0">
-                <div className="inline-block min-w-full align-middle">
-                  <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="w-1/6 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        User
-                      </th>
-                      <th className="w-1/6 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Email
-                      </th>
-                      <th className="w-1/6 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="w-1/12 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Role
-                      </th>
-                      <th className="w-1/2 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {users.map((user) => (
-                      <tr key={user.id}>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">
-                            {user.firstName} {user.lastName}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{user.email}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium">
-                            {user.approved ? (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                ✅ Zatwierdzony
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                ⏳ Oczekuje na zatwierdzenie
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">
-                            {user.role === 'admin' ? 'Admin' : 
-                             user.role === 'teacher' ? 'Teacher' : 
-                             user.role === 'parent' ? 'Rodzic' : 'Student'}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex space-x-2">
-                            {!user.approved ? (
-                              <button 
-                                onClick={() => approveUser(user.id)}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 border border-green-300 rounded-md hover:bg-green-200 transition-colors"
-                              >
-                                <CheckCircle className="h-3 w-3" />
-                                Zatwierdź
-                              </button>
-                            ) : (
-                              <button 
-                                onClick={() => rejectUser(user.id)}
-                                className="text-red-600 hover:text-red-900 font-medium text-xs px-2 py-1 rounded border hover:bg-red-50"
-                              >
-                                <XCircle className="h-3 w-3" />
-                                Odrzuć
-                              </button>
-                            )}
-                            {user.role !== 'teacher' && (
-                              <button 
-                                onClick={() => setTeacherRole(user.email || '')}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-100 border border-blue-300 rounded-md hover:bg-blue-200 transition-colors"
-                              >
-                                <GraduationCap className="h-3 w-3" />
-                                Nauczyciel
-                              </button>
-                            )}
-                            {user.role !== 'admin' && (
-                              <button 
-                                onClick={() => setAdminRole(user.id)}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 border border-green-300 rounded-md hover:bg-green-200 transition-colors"
-                              >
-                                <Shield className="h-3 w-3" />
-                                Admin
-                              </button>
-                            )}
-                            {user.role !== 'parent' && (
-                              <button 
-                                onClick={() => setParentRole(user.id)}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-100 border border-purple-300 rounded-md hover:bg-purple-200 transition-colors"
-                              >
-                                <Users className="h-3 w-3" />
-                                Rodzic
-                              </button>
-                            )}
-                            {user.role === 'admin' && (
-                              <button 
-                                onClick={() => setTeacherRole(user.email || '')}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-100 border border-orange-300 rounded-md hover:bg-orange-200 transition-colors"
-                              >
-                                <GraduationCap className="h-3 w-3" />
-                                Nauczyciel
-                              </button>
-                            )}
-                            {user.role === 'teacher' && (
-                              <>
-                                <button 
-                                  onClick={() => setStudentRole(user.id)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors"
-                                >
-                                  <Users className="h-3 w-3" />
-                                  Uczeń
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    setEditingTeacher(user);
-                                    // Pobierz aktualne dane nauczyciela
-                                    const teacherDoc = doc(db, 'users', user.id);
-                                    getDoc(teacherDoc).then(docSnap => {
-                                      if (docSnap.exists()) {
-                                        const data = docSnap.data();
-                                        setTeacherInstructorType(data.instructorType || '');
-                                        setTeacherSpecialization(Array.isArray(data.specialization) ? data.specialization.join(', ') : (data.specialization || ''));
-                                      }
-                                    });
-                                    setShowEditTeacherSpecializationModal(true);
-                                  }}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-100 border border-indigo-300 rounded-md hover:bg-indigo-200 transition-colors"
-                                  title="Edytuj specjalizację"
-                                >
-                                  <Edit className="h-3 w-3" />
-                                  Specjalizacja
-                                </button>
-                              </>
-                            )}
-                            <button 
-                              onClick={() => deleteUser(user.id)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200 transition-colors"
-                              title="Usuń użytkownika"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                              Usuń
-                            </button>
+                  
+                  {/* Lista użytkowników */}
+                  <div className="space-y-3">
+                    {users
+                      .filter(user => {
+                        if (!searchTerm) return true;
+                        const search = searchTerm.toLowerCase();
+                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+                        const email = (user.email || '').toLowerCase();
+                        return fullName.includes(search) || email.includes(search);
+                      })
+                      .map((user) => {
+                        const roleColors: { [key: string]: string } = {
+                          'admin': 'bg-red-500',
+                          'teacher': 'bg-[#4067EC]',
+                          'parent': 'bg-purple-500',
+                          'student': 'bg-green-500'
+                        };
+                        const roleColor = roleColors[user.role || 'student'] || 'bg-gray-500';
+                        return (
+                          <div 
+                            key={user.id} 
+                            className="group bg-white dark:bg-white/10 backdrop-blur-xl rounded-xl p-4 border border-gray-200 dark:border-white/20 hover:border-gray-300 dark:hover:border-white/40 transition-all duration-300 hover:shadow-xl"
+                          >
+                            <div className="flex items-center justify-between gap-4">
+                              {/* Lewa strona - informacje o użytkowniku */}
+                              <div className="flex items-center gap-4 flex-1 min-w-0">
+                                <div className={`w-12 h-12 ${roleColor} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
+                                  <span className="text-white font-bold text-lg">
+                                    {user.firstName?.[0] || ''}{user.lastName?.[0] || ''}
+                                  </span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-3 mb-1">
+                                    <h3 className="font-bold text-gray-900 dark:text-white text-lg truncate">
+                                      {user.firstName} {user.lastName}
+                                    </h3>
+                                    {user.approved ? (
+                                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-500/30 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-200 rounded-full text-xs font-semibold flex-shrink-0">
+                                        ✅ Zatwierdzony
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-500/30 border border-yellow-300 dark:border-yellow-500/50 text-yellow-700 dark:text-yellow-200 rounded-full text-xs font-semibold flex-shrink-0">
+                                        ⏳ Oczekuje
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-gray-600 dark:text-white/70 text-sm truncate">{user.email}</p>
+                                  <div className="mt-1">
+                                    <span className={`inline-flex items-center px-2 py-1 ${roleColor} text-white rounded-lg text-xs font-semibold`}>
+                                      {user.role === 'admin' ? '👑 Admin' : 
+                                       user.role === 'teacher' ? '👨‍🏫 Nauczyciel' : 
+                                       user.role === 'parent' ? '👨‍👩‍👧 Rodzic' : '🎓 Uczeń'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
 
+                              {/* Prawa strona - akcje */}
+                              <div className="flex items-center gap-2 flex-wrap justify-end">
+                                {!user.approved ? (
+                                  <button 
+                                    onClick={() => approveUser(user.id)}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
+                                    title="Zatwierdź użytkownika"
+                                  >
+                                    <CheckCircle className="h-4 w-4" />
+                                    Zatwierdź
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => rejectUser(user.id)}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
+                                    title="Odrzuć użytkownika"
+                                  >
+                                    <XCircle className="h-4 w-4" />
+                                    Odrzuć
+                                  </button>
+                                )}
+                                
+                                {user.role !== 'teacher' && (
+                                  <button 
+                                    onClick={() => setTeacherRole(user.email || '')}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                    title="Ustaw jako nauczyciela"
+                                  >
+                                    <GraduationCap className="h-4 w-4" />
+                                    Nauczyciel
+                                  </button>
+                                )}
+                                {user.role !== 'admin' && (
+                                  <button 
+                                    onClick={() => setAdminRole(user.id)}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                    title="Ustaw jako admina"
+                                  >
+                                    <Shield className="h-4 w-4" />
+                                    Admin
+                                  </button>
+                                )}
+                                {user.role !== 'parent' && (
+                                  <button 
+                                    onClick={() => setParentRole(user.id)}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                    title="Ustaw jako rodzica"
+                                  >
+                                    <Users className="h-4 w-4" />
+                                    Rodzic
+                                  </button>
+                                )}
+                                {user.role === 'admin' && (
+                                  <button 
+                                    onClick={() => setTeacherRole(user.email || '')}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                    title="Ustaw jako nauczyciela"
+                                  >
+                                    <GraduationCap className="h-4 w-4" />
+                                    Nauczyciel
+                                  </button>
+                                )}
+                                {user.role === 'teacher' && (
+                                  <>
+                                    <button 
+                                      onClick={() => setStudentRole(user.id)}
+                                      className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                      title="Ustaw jako ucznia"
+                                    >
+                                      <Users className="h-4 w-4" />
+                                      Uczeń
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        setEditingTeacher(user);
+                                        const teacherDoc = doc(db, 'users', user.id);
+                                        getDoc(teacherDoc).then(docSnap => {
+                                          if (docSnap.exists()) {
+                                            const data = docSnap.data();
+                                            setTeacherInstructorType(data.instructorType || '');
+                                            setTeacherSpecialization(Array.isArray(data.specialization) ? data.specialization.join(', ') : (data.specialization || ''));
+                                          }
+                                        });
+                                        setShowEditTeacherSpecializationModal(true);
+                                      }}
+                                      className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                                      title="Edytuj specjalizację"
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                      Spec.
+                                    </button>
+                                  </>
+                                )}
+                                <button 
+                                  onClick={() => deleteUser(user.id)}
+                                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all duration-200 hover:shadow-md"
+                                  title="Usuń użytkownika"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Usuń
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                  </div>
-                </div>
-              
-              {/* Mobile View - Cards */}
-              <div className="md:hidden space-y-4 mt-4">
-                {users.map((user) => (
-                  <div key={user.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-semibold text-gray-900 truncate">
-                          {user.firstName} {user.lastName}
-                        </h3>
-                        <p className="text-xs text-gray-600 truncate mt-1">{user.email}</p>
-                      </div>
-                      <div className="ml-2 flex-shrink-0">
-                        {user.approved ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            ✅ Zatwierdzony
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                            ⏳ Oczekuje
-                          </span>
+                        );
+                      })}
+                    {users.filter(user => {
+                      if (!searchTerm) return true;
+                      const search = searchTerm.toLowerCase();
+                      const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+                      const email = (user.email || '').toLowerCase();
+                      return fullName.includes(search) || email.includes(search);
+                    }).length === 0 && (
+                      <div className="text-center py-12 text-gray-500 dark:text-white/50">
+                        <p className="text-lg">Brak użytkowników do wyświetlenia</p>
+                        {searchTerm && (
+                          <p className="text-sm mt-2">Spróbuj zmienić kryteria wyszukiwania</p>
                         )}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs text-gray-500">Rola:</span>
-                      <span className="text-xs font-medium text-gray-700">
-                        {user.role === 'admin' ? 'Admin' : 
-                         user.role === 'teacher' ? 'Teacher' : 
-                         user.role === 'parent' ? 'Rodzic' : 'Student'}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {!user.approved ? (
-                        <button 
-                          onClick={() => approveUser(user.id)}
-                          className="flex-1 min-w-[100px] inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-green-700 bg-green-100 border border-green-300 rounded-md hover:bg-green-200 transition-colors"
-                        >
-                          <CheckCircle className="h-3 w-3" />
-                          Zatwierdź
-                        </button>
-                      ) : (
-                        <button 
-                          onClick={() => rejectUser(user.id)}
-                          className="flex-1 min-w-[100px] inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-red-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200 transition-colors"
-                        >
-                          <XCircle className="h-3 w-3" />
-                          Odrzuć
-                        </button>
-                      )}
-                      {user.role !== 'teacher' && (
-                        <button 
-                          onClick={() => setTeacherRole(user.email || '')}
-                          className="flex-1 min-w-[100px] inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-100 border border-blue-300 rounded-md hover:bg-blue-200 transition-colors"
-                        >
-                          <GraduationCap className="h-3 w-3" />
-                          Nauczyciel
-                        </button>
-                      )}
-                      <button 
-                        onClick={() => deleteUser(user.id)}
-                        className="flex-1 min-w-[100px] inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-red-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200 transition-colors"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Usuń
-                      </button>
-                    </div>
+                    )}
                   </div>
-                ))}
-              </div>
                 </div>
               </div>
             )}
 
             {activeTab === "pending" && (
-              <div className="bg-white rounded-lg shadow w-full">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-800">Pending Users - Oczekujący na zatwierdzenie</h2>
+                <h2 className="text-xl font-semibold text-gray-900">Oczekujący na zatwierdzenie</h2>
                 <div className="text-sm text-gray-600">
                   <span className="font-medium text-yellow-600">{users.filter(u => !u.approved).length}</span> użytkowników oczekuje na zatwierdzenie
                 </div>
@@ -1644,21 +1577,21 @@ function SuperAdminDashboardContent() {
                           <div className="flex space-x-2">
                             <button 
                               onClick={() => approveUser(user.id)}
-                              className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 border border-green-300 rounded-md hover:bg-green-200 transition-colors"
                             >
                               <CheckCircle className="h-3 w-3" />
                               Zatwierdź
                             </button>
                             <button 
                               onClick={() => rejectUser(user.id)}
-                              className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200 transition-colors"
                             >
                               <XCircle className="h-3 w-3" />
                               Odrzuć
                             </button>
                             <button 
                               onClick={() => deleteUser(user.id)}
-                              className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700 transition"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200 transition-colors"
                               title="Usuń użytkownika"
                             >
                               <Trash2 className="h-3 w-3" />
@@ -1681,15 +1614,16 @@ function SuperAdminDashboardContent() {
         )}
 
             {activeTab === "groups" && (
-              <div className="bg-white rounded-lg shadow w-full">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-800">Group Management</h2>
+                <h2 className="text-xl font-semibold text-gray-900">Zarządzanie grupami</h2>
                 <button 
                   onClick={() => setShowCreateGroupModal(true)}
-                  className="bg-[#4067EC] text-white px-4 py-2 rounded-lg hover:bg-[#3155d4] transition"
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm hover:shadow-md flex items-center gap-2"
                 >
-                  Create New Group
+                  <Plus className="w-4 h-4" />
+                  Utwórz grupę
                 </button>
               </div>
               {groupSuccess && (
@@ -1760,22 +1694,23 @@ function SuperAdminDashboardContent() {
         )}
 
             {activeTab === "courses" && (
-              <div className="bg-white rounded-lg shadow w-full">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-800">Course Management</h2>
+                <h2 className="text-xl font-semibold text-gray-900">Zarządzanie kursami</h2>
                 <div className="flex space-x-2">
                   <button 
                     onClick={updateExistingCoursesWithSlug}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm hover:shadow-md"
                   >
-                    Update Slugs
+                    Aktualizuj slugi
                   </button>
                   <button 
                     onClick={() => setShowCreateCourseModal(true)}
-                    className="bg-[#4067EC] text-white px-4 py-2 rounded-lg hover:bg-[#3155d4] transition"
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm hover:shadow-md flex items-center gap-2"
                   >
-                    Add New Course
+                    <Plus className="w-4 h-4" />
+                    Dodaj kurs
                   </button>
                 </div>
               </div>
@@ -1859,13 +1794,10 @@ function SuperAdminDashboardContent() {
         )}
 
             {activeTab === "assignments" && (
-              <div className="bg-white rounded-lg shadow w-full">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-800">Course Assignments</h2>
-                <button className="bg-[#4067EC] text-white px-4 py-2 rounded-lg hover:bg-[#3155d4] transition">
-                  New Assignment
-                </button>
+                <h2 className="text-xl font-semibold text-gray-900">Przypisania kursów</h2>
               </div>
               {success && (
                 <div className="mb-4 bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded relative">
@@ -2140,104 +2072,10 @@ function SuperAdminDashboardContent() {
                 </div>
               </div>
             )}
-
-          </div>
-
-        {/* Prawa kolumna - Szybkie akcje i aktywności - jednakowa szerokość */}
-        <div className="lg:col-span-1 w-full max-w-full space-y-6">
-          {/* Quick Actions */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full max-w-full">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Szybkie akcje</h3>
-              <p className="text-sm text-gray-600">Najczęściej używane funkcje</p>
-            </div>
-            <div className="p-6 space-y-4">
-              <button
-                onClick={() => setShowCreateUserModal(true)}
-                className="w-full flex items-center gap-3 p-3 text-left rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                <UserPlus className="h-5 w-5 text-blue-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Dodaj użytkownika</div>
-                  <div className="text-sm text-gray-600">Utwórz nowe konto</div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setShowCreateCourseModal(true)}
-                className="w-full flex items-center gap-3 p-3 text-left rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                <BookOpen className="h-5 w-5 text-green-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Utwórz kurs</div>
-                  <div className="text-sm text-gray-600">Dodaj nowy kurs</div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setShowCreateGroupModal(true)}
-                className="w-full flex items-center gap-3 p-3 text-left rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                <Group className="h-5 w-5 text-purple-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Utwórz grupę</div>
-                  <div className="text-sm text-gray-600">Dodaj nową grupę</div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab("pending")}
-                className="w-full flex items-center gap-3 p-3 text-left rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                <Clock className="h-5 w-5 text-yellow-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Zatwierdź użytkowników</div>
-                  <div className="text-sm text-gray-600">Przeglądaj oczekujących</div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 w-full max-w-full">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Ostatnie aktywności</h3>
-              <p className="text-sm text-gray-600">Najnowsze wydarzenia w systemie</p>
-            </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                {recentActivities.length > 0 ? (
-                  recentActivities.slice(0, 5).map((activity, index) => {
-                    const Icon = activity.icon;
-                    return (
-                      <div key={index} className="flex items-start gap-3 pb-4 border-b border-gray-100 last:border-0 last:pb-0">
-                        <div className="p-2 bg-blue-50 rounded-lg flex-shrink-0">
-                          <Icon className="h-4 w-4 text-blue-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900">{activity.title}</p>
-                          <p className="text-xs text-gray-500 mt-1">{activity.timestamp}</p>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    Brak ostatnich aktywności
-                  </div>
-                )}
-              </div>
-              
-              <div className="mt-6 pt-4 border-t border-gray-200">
-                <button className="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium">
-                  Zobacz wszystkie aktywności
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
-        </div>
+      </main>
 
+      {/* Modals - outside main */}
       {/* Reset Password Modal */}
       {showResetPasswordModal && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
@@ -2285,48 +2123,64 @@ function SuperAdminDashboardContent() {
 
       {/* Create Course Modal */}
       {showCreateCourseModal && (
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
-            <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-              <div className="mt-3">
-                <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">
-                  Create New Course
-                </h3>
+          <div className="fixed inset-0 bg-gray-900/20 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+            <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                      <BookOpen className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900">
+                      Utwórz nowy kurs
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setShowCreateCourseModal(false)}
+                    className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors group"
+                  >
+                    <span className="text-gray-500 group-hover:text-gray-700 text-lg font-medium">×</span>
+                  </button>
+                </div>
                 {error && (
-                  <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded relative">
+                  <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                     {error}
                   </div>
                 )}
-                <div className="mt-2 px-7 py-3 space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); createCourse(); }} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Course Title *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tytuł kursu *</label>
                     <input
                       type="text"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       value={newCourseTitle}
                       onChange={(e) => setNewCourseTitle(e.target.value)}
-                      placeholder="e.g., Matematyka 7A"
+                      placeholder="np. Matematyka 7A"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Year *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Rok *</label>
                     <input
                       type="number"
                       min="1"
                       max="12"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       value={newCourseYear}
                       onChange={(e) => setNewCourseYear(e.target.value)}
-                      placeholder="e.g., 7"
+                      placeholder="np. 7"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Subject *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Przedmiot *</label>
                     <select
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       value={newCourseSubject}
                       onChange={(e) => setNewCourseSubject(e.target.value)}
+                      required
                     >
-                      <option value="">Select a subject...</option>
+                      <option value="">Wybierz przedmiot...</option>
                       <option value="Matematyka">Matematyka</option>
                       <option value="Fizyka">Fizyka</option>
                       <option value="Chemia">Chemia</option>
@@ -2347,9 +2201,9 @@ function SuperAdminDashboardContent() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Description</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Opis</label>
                     <textarea
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       rows={3}
                       value={newCourseDescription}
                       onChange={(e) => setNewCourseDescription(e.target.value)}
@@ -2357,13 +2211,14 @@ function SuperAdminDashboardContent() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Assign Teacher *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Przypisz nauczyciela *</label>
                     <select
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       value={selectedTeacherForCourse}
                       onChange={(e) => setSelectedTeacherForCourse(e.target.value)}
+                      required
                     >
-                      <option value="">Select a teacher...</option>
+                      <option value="">Wybierz nauczyciela...</option>
                       {users.filter(u => u.role === 'teacher').map((user: FirestoreUser) => (
                         <option key={user.id} value={user.email}>
                           {user.firstName || ''} {user.lastName || ''} ({user.email})
@@ -2371,29 +2226,30 @@ function SuperAdminDashboardContent() {
                       ))}
                     </select>
                   </div>
-                </div>
-                <div className="flex justify-end mt-4 space-x-3">
-                  <button
-                    onClick={() => {
-                      setShowCreateCourseModal(false);
-                      setNewCourseTitle("");
-                      setNewCourseYear("");
-                      setNewCourseDescription("");
-                      setNewCourseSubject("");
-                      setSelectedTeacherForCourse("");
-                      setError("");
-                    }}
-                    className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={createCourse}
-                    className="px-4 py-2 bg-[#4067EC] text-white rounded-md hover:bg-[#3155d4]"
-                  >
-                    Create Course
-                  </button>
-                </div>
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateCourseModal(false);
+                        setNewCourseTitle("");
+                        setNewCourseYear("");
+                        setNewCourseDescription("");
+                        setNewCourseSubject("");
+                        setSelectedTeacherForCourse("");
+                        setError("");
+                      }}
+                      className="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+                    >
+                      Anuluj
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      Utwórz kurs
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           </div>
@@ -2401,63 +2257,18 @@ function SuperAdminDashboardContent() {
 
       {/* Create User Modal */}
       {showCreateUserModal && (
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
-            <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-              <div className="mt-3">
-                <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">
-                  Create New User
-                </h3>
-                {error && (
-                  <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded relative">
-                    {error}
+          <div className="fixed inset-0 bg-gray-900/20 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+            <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                      <UserPlus className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900">
+                      Utwórz nowego użytkownika
+                    </h3>
                   </div>
-                )}
-                <div className="mt-2 px-7 py-3 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Email *</label>
-                    <input
-                      type="email"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      value={newUserEmail}
-                      onChange={(e) => setNewUserEmail(e.target.value)}
-                      placeholder="user@example.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">First Name *</label>
-                    <input
-                      type="text"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      value={newUserFirstName}
-                      onChange={(e) => setNewUserFirstName(e.target.value)}
-                      placeholder="John"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Last Name *</label>
-                    <input
-                      type="text"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      value={newUserLastName}
-                      onChange={(e) => setNewUserLastName(e.target.value)}
-                      placeholder="Doe"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Role *</label>
-                    <select
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      value={newUserRole}
-                      onChange={(e) => setNewUserRole(e.target.value)}
-                    >
-                      <option value="student">Student</option>
-                      <option value="teacher">Teacher</option>
-                      <option value="admin">Admin</option>
-                      <option value="parent">Parent</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="flex justify-end mt-4 space-x-3">
                   <button
                     onClick={() => {
                       setShowCreateUserModal(false);
@@ -2467,17 +2278,87 @@ function SuperAdminDashboardContent() {
                       setNewUserRole("student");
                       setError("");
                     }}
-                    className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+                    className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors group"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={createUser}
-                    className="px-4 py-2 bg-[#4067EC] text-white rounded-md hover:bg-[#3155d4]"
-                  >
-                    Create User
+                    <span className="text-gray-500 group-hover:text-gray-700 text-lg font-medium">×</span>
                   </button>
                 </div>
+                {error && (
+                  <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                    {error}
+                  </div>
+                )}
+                <form onSubmit={(e) => { e.preventDefault(); createUser(); }} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                    <input
+                      type="email"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      value={newUserEmail}
+                      onChange={(e) => setNewUserEmail(e.target.value)}
+                      placeholder="user@example.com"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Imię *</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      value={newUserFirstName}
+                      onChange={(e) => setNewUserFirstName(e.target.value)}
+                      placeholder="Jan"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nazwisko *</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      value={newUserLastName}
+                      onChange={(e) => setNewUserLastName(e.target.value)}
+                      placeholder="Kowalski"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Rola *</label>
+                    <select
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      value={newUserRole}
+                      onChange={(e) => setNewUserRole(e.target.value)}
+                      required
+                    >
+                      <option value="student">Uczeń</option>
+                      <option value="teacher">Nauczyciel</option>
+                      <option value="admin">Administrator</option>
+                      <option value="parent">Rodzic</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateUserModal(false);
+                        setNewUserEmail("");
+                        setNewUserFirstName("");
+                        setNewUserLastName("");
+                        setNewUserRole("student");
+                        setError("");
+                      }}
+                      className="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+                    >
+                      Anuluj
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      Utwórz użytkownika
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           </div>
@@ -2485,38 +2366,18 @@ function SuperAdminDashboardContent() {
 
       {/* Create Group Modal */}
       {showCreateGroupModal && (
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
-            <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-              <div className="mt-3">
-                <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">
-                  Create New Group
-                </h3>
-                {groupError && (
-                  <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded relative">
-                    {groupError}
+          <div className="fixed inset-0 bg-gray-900/20 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+            <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                      <Group className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900">
+                      Utwórz nową grupę
+                    </h3>
                   </div>
-                )}
-                <div className="mt-2 px-7 py-3 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Group Name</label>
-                    <input
-                      type="text"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      value={newGroupName}
-                      onChange={(e) => setNewGroupName(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Description</label>
-                    <textarea
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#4067EC] focus:ring-[#4067EC]"
-                      rows={3}
-                      value={newGroupDescription}
-                      onChange={(e) => setNewGroupDescription(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end mt-4 space-x-3">
                   <button
                     onClick={() => {
                       setShowCreateGroupModal(false);
@@ -2524,17 +2385,59 @@ function SuperAdminDashboardContent() {
                       setNewGroupDescription("");
                       setGroupError("");
                     }}
-                    className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+                    className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors group"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={createGroup}
-                    className="px-4 py-2 bg-[#4067EC] text-white rounded-md hover:bg-[#3155d4]"
-                  >
-                    Create Group
+                    <span className="text-gray-500 group-hover:text-gray-700 text-lg font-medium">×</span>
                   </button>
                 </div>
+                {groupError && (
+                  <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                    {groupError}
+                  </div>
+                )}
+                <form onSubmit={(e) => { e.preventDefault(); createGroup(); }} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nazwa grupy *</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      placeholder="np. Grupa A"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Opis</label>
+                    <textarea
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      rows={3}
+                      value={newGroupDescription}
+                      onChange={(e) => setNewGroupDescription(e.target.value)}
+                      placeholder="Opis grupy..."
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateGroupModal(false);
+                        setNewGroupName("");
+                        setNewGroupDescription("");
+                        setGroupError("");
+                      }}
+                      className="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+                    >
+                      Anuluj
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 bg-purple-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-purple-700 transition-colors"
+                    >
+                      Utwórz grupę
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           </div>
@@ -2829,7 +2732,6 @@ function SuperAdminDashboardContent() {
             </div>
           </div>
         )}
-      </main>
     </div>
   );
 }

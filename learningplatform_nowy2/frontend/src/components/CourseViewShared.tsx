@@ -213,7 +213,9 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <h1 className="text-4xl font-bold mb-3">{course?.title || 'Ładowanie...'}</h1>
-              <p className="text-blue-100 text-lg">Nauczyciel: {course?.teacherEmail || 'Brak informacji'}</p>
+              <p className="text-blue-100 text-lg">
+                Nauczyciel: {course?.instructor_name || course?.teacherEmail || 'Brak informacji'}
+              </p>
               {isTeacherPreview && (
                 <div className="mt-3 inline-block bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-medium">
                   👁️ Tryb podglądu

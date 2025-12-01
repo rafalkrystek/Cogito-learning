@@ -193,13 +193,6 @@ function Dashboard() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [selectedTeacher, setSelectedTeacher] = useState<string>('');
-  const [message, setMessage] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<string | null>(null);
   const [searchPosition, setSearchPosition] = useState({ left: 0, width: 0 });
 
 
@@ -676,41 +669,6 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, [user]);
 
-  // Obsługa wysyłki maila
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSendSuccess(null);
-    setSendError(null);
-    setSending(true);
-    try {
-      const teacher = teachers.find(t => t.uid === selectedTeacher);
-      if (!teacher) throw new Error('Nie wybrano nauczyciela.');
-      // Przygotuj dane do wysyłki
-      const formData = new FormData();
-      formData.append('to', teacher.email);
-      formData.append('subject', `Wiadomość od ucznia przez platformę`);
-      formData.append('body', message);
-      if (selectedFiles.length > 0) {
-        selectedFiles.forEach((file) => {
-          formData.append('attachments', file, file.name);
-        });
-      }
-      // Wywołaj endpoint backendu (np. /api/send-email)
-      const res = await fetch('/api/send-email', {
-        method: 'POST',
-        body: formData,
-      });
-      if (!res.ok) throw new Error('Błąd wysyłki maila.');
-      setSendSuccess('Wiadomość została wysłana!');
-      setMessage('');
-      setSelectedFiles([]);
-      setSelectedTeacher('');
-    } catch (err) {
-      setSendError((err as Error).message || 'Błąd wysyłki.');
-    } finally {
-      setSending(false);
-    }
-  };
 
   // Funkcja do obsługi kliknięcia w powiadomienie - memoizowana
   const handleNotificationClick = useCallback((notification: Notification) => {
@@ -768,36 +726,6 @@ function Dashboard() {
     };
   }, [showNotifications]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const files = Array.from(e.target.files);
-    // Sprawdź liczbę plików
-    if (files.length + selectedFiles.length > 3) {
-      setFileError('Możesz dodać maksymalnie 3 pliki.');
-      return;
-    }
-    // Sprawdź typy i sumę rozmiarów
-    const allFiles = [...selectedFiles, ...files];
-    const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
-    let totalSize = 0;
-    for (const file of allFiles) {
-      if (!allowedTypes.includes(file.type)) {
-        setFileError('Dozwolone są tylko pliki JPG, PNG lub PDF.');
-        return;
-      }
-      totalSize += file.size;
-    }
-    if (totalSize > 30 * 1024 * 1024) {
-      setFileError('Łączny rozmiar plików nie może przekraczać 30 MB.');
-      return;
-    }
-    setFileError(null);
-    setSelectedFiles(allFiles);
-  };
-
-  const handleRemoveFile = (idx: number) => {
-    setSelectedFiles(selectedFiles.filter((_, i) => i !== idx));
-  };
 
   return (
     <>
@@ -1189,21 +1117,34 @@ function Dashboard() {
           {/* Main dashboard */}
           <section className="space-y-4 lg:space-y-6">
             {/* Progress & Chart */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
-              {/* Shortcut/statystyka do statystyk profilu */}
-              <div className="lg:col-span-1">
-                <a href="/profile/statistics" className="block bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-xl shadow-lg p-4 flex flex-col justify-between hover:shadow-xl transition-all duration-300 cursor-pointer border border-white/20 dark:border-gray-700/50 hover:border-[#4067EC] dark:hover:border-blue-400 h-full group">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="bg-gradient-to-r from-[#4067EC] to-[#5577FF] p-2 rounded-lg text-white shadow-lg">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2a4 4 0 014-4h4" /></svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Statystyki profilu</div>
-                      <div className="text-sm font-bold text-gray-800 dark:text-gray-200 group-hover:text-[#4067EC] dark:group-hover:text-blue-400 transition-colors">Zobacz szczegóły &rarr;</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Statystyki profilu - rozszerzona */}
+              <div className="md:col-span-1">
+                <a href="/profile/statistics" className="block bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-lg p-6 flex flex-col hover:shadow-xl transition-all duration-300 cursor-pointer border border-white/20 dark:border-gray-700/50 hover:border-[#4067EC] dark:hover:border-blue-400 h-full group">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-gradient-to-r from-[#4067EC] to-[#5577FF] p-3 rounded-xl text-white shadow-lg">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400 font-medium">Statystyki profilu</div>
+                        <div className="text-lg font-bold text-gray-800 dark:text-gray-200 group-hover:text-[#4067EC] dark:group-hover:text-blue-400 transition-colors">Zobacz szczegóły &rarr;</div>
+                      </div>
                     </div>
                   </div>
-                  <div className="h-20 flex items-center justify-center">
-                    <svg viewBox="0 0 200 80" className="w-full h-16">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Śledź swój postęp w nauce, czas spędzony na platformie i osiągnięcia.</p>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-lg p-3 border border-blue-200 dark:border-blue-700/50">
+                      <div className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Kursy</div>
+                      <div className="text-xl font-bold text-blue-700 dark:text-blue-300">{assignedCourses.length}</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-lg p-3 border border-green-200 dark:border-green-700/50">
+                      <div className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Aktywność</div>
+                      <div className="text-xl font-bold text-green-700 dark:text-green-300">Wysoka</div>
+                    </div>
+                  </div>
+                  <div className="h-24 flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-700/50 dark:to-gray-800/50 rounded-xl p-4">
+                    <svg viewBox="0 0 200 80" className="w-full h-20">
                       <rect x="20" y="40" width="20" height="30" fill="url(#gradient)" rx="4" />
                       <rect x="50" y="30" width="20" height="40" fill="url(#gradient)" rx="4" />
                       <rect x="80" y="20" width="20" height="50" fill="url(#gradient)" rx="4" />
@@ -1220,107 +1161,50 @@ function Dashboard() {
                 </a>
               </div>
 
-              {/* Chat with Teacher */}
-              <div className="lg:col-span-1">
-                <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-xl shadow-lg p-4 h-full border border-white/20 dark:border-gray-700/50">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="bg-gradient-to-r from-green-500 to-green-600 p-2 rounded-lg text-white shadow-lg">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                      </svg>
-                    </div>
-                    <h2 className="text-sm font-bold text-gray-800 dark:text-gray-200">Napisz do nauczyciela</h2>
-                  </div>
-                  <form className="flex flex-col gap-3" onSubmit={handleSendMessage}>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1 block">Wybierz nauczyciela</label>
-                      <select
-                        className="w-full border border-white/30 dark:border-gray-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4067EC] dark:focus:ring-blue-400 bg-white/60 dark:bg-gray-700/60 backdrop-blur-sm text-gray-800 dark:text-gray-200 font-medium text-xs shadow-sm"
-                        required
-                        value={selectedTeacher}
-                        onChange={e => setSelectedTeacher(e.target.value)}
-                      >
-                        <option value="">-- Wybierz nauczyciela --</option>
-                        {teachers.map(t => (
-                          <option key={t.uid} value={t.uid}>{t.displayName || t.email} | {t.subject || 'przedmiot'}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1 block">Wiadomość</label>
-                      <textarea
-                        className="w-full border border-white/30 dark:border-gray-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4067EC] dark:focus:ring-blue-400 resize-none min-h-[60px] max-h-[120px] bg-white/60 dark:bg-gray-700/60 backdrop-blur-sm text-gray-800 dark:text-gray-200 font-medium placeholder-gray-400 dark:placeholder-gray-500 text-xs shadow-sm"
-                        maxLength={2000}
-                        placeholder="Napisz wiadomość..."
-                        required
-                        value={message}
-                        onChange={e => setMessage(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1 block">Załącz pliki (max 3, jpg/png/pdf, max 30MB)</label>
-                      <input
-                        type="file"
-                        accept=".jpg,.jpeg,.png,.pdf"
-                        className="w-full border border-white/30 dark:border-gray-600 rounded-lg px-3 py-2 text-xs bg-white/60 dark:bg-gray-700/60 backdrop-blur-sm shadow-sm text-gray-800 dark:text-gray-200"
-                        multiple
-                        onChange={handleFileChange}
-                        disabled={selectedFiles.length >= 3}
-                      />
-                      {fileError && <div className="text-red-500 text-xs mt-1">{fileError}</div>}
-                      <ul className="mt-1 space-y-1">
-                        {selectedFiles.map((file) => (
-                          <li key={file.name} className="flex items-center justify-between bg-white/40 rounded-lg p-1 text-xs text-gray-700">
-                            <span className="font-medium">{file.name} ({(file.size/1024/1024).toFixed(2)} MB)</span>
-                            <button type="button" className="text-red-500 hover:text-red-700 font-semibold" onClick={() => handleRemoveFile(selectedFiles.indexOf(file))}>Usuń</button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    {sendSuccess && <div className="text-green-600 text-sm bg-green-50 rounded-lg p-3">{sendSuccess}</div>}
-                    {sendError && <div className="text-red-600 text-sm bg-red-50 rounded-lg p-3">{sendError}</div>}
-                    <button
-                      type="submit"
-                      className="w-full bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white px-3 py-2 rounded-lg font-semibold cursor-pointer transition-all duration-200 hover:from-[#3155d4] hover:to-[#4067EC] hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-xs"
-                      disabled={!!fileError || selectedFiles.length > 3 || sending}
-                    >
-                      {sending ? 'Wysyłanie...' : 'Wyślij wiadomość'}
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              {/* Ankiety */}
-              <div className="lg:col-span-1">
-                <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-xl shadow-lg p-4 h-full flex flex-col justify-between border border-white/20 dark:border-gray-700/50">
+              {/* Ankiety - rozszerzona */}
+              <div className="md:col-span-1">
+                <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-lg p-6 h-full flex flex-col justify-between border border-white/20 dark:border-gray-700/50">
                   <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-2 rounded-lg text-white shadow-lg">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-3 rounded-xl text-white shadow-lg">
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-gray-800 dark:text-gray-200">Ankiety</h2>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Oceń swoich nauczycieli</p>
+                        </div>
                       </div>
-                      <h2 className="text-sm font-bold text-gray-800 dark:text-gray-200">Ankiety</h2>
                     </div>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">Twoja opinia jest dla nas bardzo ważna! Pomóż nam rozwijać platformę.</p>
-                    <div className="flex items-center gap-2 mb-4">
-                      <div className="bg-gradient-to-r from-[#4067EC] to-[#5577FF] p-2 rounded-lg text-white shadow-lg">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Twoja opinia jest dla nas bardzo ważna! Pomóż nam rozwijać platformę i poprawiać jakość nauczania.</p>
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-xl p-4 mb-4 border border-orange-200 dark:border-orange-700/50">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-gradient-to-r from-[#4067EC] to-[#5577FF] p-2 rounded-lg text-white shadow-md">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Wypełnij ankiety</div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">Pomóż nam się rozwijać i poprawiać jakość edukacji</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Wypełnij ankiety</div>
-                        <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">Pomóż nam się rozwijać</div>
-                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-4">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Ankiety są anonimowe i bezpieczne</span>
                     </div>
                   </div>
                   <a 
                     href="/homelogin/ankiety" 
-                    className="inline-flex items-center justify-center bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white px-3 py-2 rounded-lg font-semibold hover:from-[#3155d4] hover:to-[#4067EC] transition-all duration-200 hover:shadow-lg w-full group shadow-md text-xs"
+                    className="inline-flex items-center justify-center bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white px-4 py-3 rounded-xl font-semibold hover:from-[#3155d4] hover:to-[#4067EC] transition-all duration-200 hover:shadow-lg w-full group shadow-md"
                   >
                     <span className="text-white font-bold">Przejdź do ankiet</span>
-                    <svg className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
                   </a>

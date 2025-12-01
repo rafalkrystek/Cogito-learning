@@ -49,6 +49,8 @@ interface Course {
   subject: string;
   is_active: boolean;
   assigned_users: User[];
+  instructor_name?: string;
+  teacherEmail?: string;
 }
 
 interface SectionContent {
@@ -1091,9 +1093,11 @@ function TeacherCourseDetailContent() {
   // Edit course description
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
+  const [editedInstructorName, setEditedInstructorName] = useState('');
 
   const handleEditDescription = useCallback(() => {
     setEditedDescription(course?.description || '');
+    setEditedInstructorName(course?.instructor_name || '');
     setIsEditingDescription(true);
   }, [course]);
 
@@ -1102,22 +1106,36 @@ function TeacherCourseDetailContent() {
     
     try {
       const courseRef = doc(db, "courses", String(courseId));
-      await updateDoc(courseRef, { description: editedDescription.trim() });
+      const updateData: { description: string; instructor_name?: string } = {
+        description: editedDescription.trim()
+      };
+      
+      // Dodaj imię nauczyciela jeśli zostało wprowadzone
+      if (editedInstructorName.trim()) {
+        updateData.instructor_name = editedInstructorName.trim();
+      }
+      
+      await updateDoc(courseRef, updateData);
       
       // Update local state
-      setCourse(prev => prev ? { ...prev, description: editedDescription.trim() } : null);
+      setCourse(prev => prev ? { 
+        ...prev, 
+        description: editedDescription.trim(),
+        instructor_name: editedInstructorName.trim() || prev.instructor_name
+      } : null);
       setIsEditingDescription(false);
       
-      console.log('Course description updated successfully');
+      console.log('Course description and instructor name updated successfully');
     } catch (error) {
       console.error('Error updating course description:', error);
       alert('Błąd podczas aktualizacji opisu kursu');
     }
-  }, [courseId, editedDescription]);
+  }, [courseId, editedDescription, editedInstructorName]);
 
   const handleCancelDescription = useCallback(() => {
     setIsEditingDescription(false);
     setEditedDescription('');
+    setEditedInstructorName('');
   }, []);
 
 
@@ -1937,13 +1955,30 @@ function TeacherCourseDetailContent() {
           {/* Editable description */}
           {isEditingDescription ? (
             <div className="mb-4">
-              <textarea
-                value={editedDescription}
-                onChange={(e) => setEditedDescription(e.target.value)}
-                className="w-full p-2 rounded border-2 border-white/30 bg-white/20 text-white placeholder-white/70 resize-none"
-                placeholder="Opis kursu"
-                rows={2}
-              />
+              <div className="mb-3">
+                <label className="block text-white text-sm font-medium mb-1">
+                  Imię i nazwisko nauczyciela
+                </label>
+                <input
+                  type="text"
+                  value={editedInstructorName}
+                  onChange={(e) => setEditedInstructorName(e.target.value)}
+                  className="w-full p-2 rounded border-2 border-white/30 bg-white/20 text-white placeholder-white/70"
+                  placeholder="np. Jan Kowalski"
+                />
+              </div>
+              <div className="mb-3">
+                <label className="block text-white text-sm font-medium mb-1">
+                  Opis kursu
+                </label>
+                <textarea
+                  value={editedDescription}
+                  onChange={(e) => setEditedDescription(e.target.value)}
+                  className="w-full p-2 rounded border-2 border-white/30 bg-white/20 text-white placeholder-white/70 resize-none"
+                  placeholder="Opis kursu"
+                  rows={2}
+                />
+              </div>
               <div className="flex gap-2 mt-2">
                 <button
                   onClick={handleSaveDescription}
@@ -1961,6 +1996,11 @@ function TeacherCourseDetailContent() {
             </div>
           ) : (
             <div className="mb-4">
+              {course?.instructor_name && (
+                <p className="text-white text-base font-semibold drop-shadow mb-2">
+                  Nauczyciel: {course.instructor_name}
+                </p>
+              )}
               <p className="text-white text-lg font-medium drop-shadow mb-2">
                 {course?.description || 'Opis kursu'}
               </p>

@@ -61,7 +61,6 @@ export default function TeacherDashboard() {
   const [stats, setStats] = useState({
     courses: 0,
     students: 0,
-    gradesToCheck: 0,
     averageGrade: 0
   });
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
@@ -70,10 +69,22 @@ export default function TeacherDashboard() {
 
   // Memoizuj filtrowane aktywności
   const filteredActivities = useMemo(() => {
-    return recentActivities.filter(activity => {
+    const filtered = recentActivities.filter(activity => {
       if (activeTab === 'all') return true;
-      return activity.type === activeTab;
+      // Mapowanie typów aktywności do zakładek
+      if (activeTab === 'quiz') {
+        return activity.type === 'quiz';
+      }
+      if (activeTab === 'grade') {
+        return activity.type === 'grade';
+      }
+      if (activeTab === 'course') {
+        return activity.type === 'course';
+      }
+      return false;
     });
+    console.log('🔍 Filtered activities:', { activeTab, total: recentActivities.length, filtered: filtered.length });
+    return filtered;
   }, [recentActivities, activeTab]);
 
   // Memoizuj definicje zakładek
@@ -129,19 +140,6 @@ export default function TeacherDashboard() {
         .filter(snapshot => !snapshot.empty)
         .map(snapshot => snapshot.docs[0].data() as Student);
       
-      // Pobierz zadania do sprawdzenia z sekcji kursów
-      let gradesToCheck = 0;
-      courses.forEach(course => {
-        if (course.sections && Array.isArray(course.sections)) {
-          course.sections.forEach((section: any) => {
-            if (section.type === 'assignment' && section.submissions && Array.isArray(section.submissions)) {
-              const ungradedSubmissions = section.submissions.filter((sub: any) => !sub.grade && sub.grade !== 0);
-              gradesToCheck += ungradedSubmissions.length;
-            }
-          });
-        }
-      });
-      
       // Oblicz średnią ocen z quizów - tylko dla kursów nauczyciela, z limitem
       let totalQuizScore = 0;
       let quizCount = 0;
@@ -177,7 +175,6 @@ export default function TeacherDashboard() {
       setStats({
         courses: courses.length,
         students: studentsData.length,
-        gradesToCheck,
         averageGrade: Math.round(clampedAverage * 10) / 10
       });
       
@@ -252,67 +249,71 @@ export default function TeacherDashboard() {
       });
       
       // 2-7. Pobierz wszystkie aktywności równolegle
+      // Uwaga: Usuwamy orderBy z zapytań, które wymagają indeksu - sortowanie zrobimy w kodzie
       const [gradesSnapshot, chatSnapshot, quizzesSnapshot, studentsSnapshot, surveysSnapshot] = await Promise.all([
-        getDocs(query(collection(db, 'grades'), where('graded_by', '==', user.email), orderBy('graded_at', 'desc'), limit(5))),
-        getDocs(query(collection(db, 'group_chat_messages'), where('senderEmail', '==', user.email), orderBy('timestamp', 'desc'), limit(3))),
-        getDocs(query(collection(db, 'quizzes'), where('created_by', '==', user.email), orderBy('created_at', 'desc'), limit(3))),
-        getDocs(query(collection(db, 'users'), where('primaryTutorId', '==', user.uid))),
-        getDocs(query(collection(db, 'teacherSurveys'), where('teacherId', '==', user.uid), orderBy('submittedAt', 'desc'), limit(3)))
+        // Oceny - bez orderBy (sortowanie w kodzie)
+        getDocs(query(collection(db, 'grades'), where('graded_by', '==', user.email), limit(20))).catch(() => ({ docs: [] })),
+        // Czat - bez orderBy (sortowanie w kodzie) - usuwamy to zapytanie, bo wymaga indeksu
+        Promise.resolve({ docs: [] }), // Tymczasowo wyłączone
+        // Quizy - bez orderBy (sortowanie w kodzie)
+        getDocs(query(collection(db, 'quizzes'), where('created_by', '==', user.email), limit(20))).catch(() => ({ docs: [] })),
+        getDocs(query(collection(db, 'users'), where('primaryTutorId', '==', user.uid))).catch(() => ({ docs: [] })),
+        // Ankiety - bez orderBy (sortowanie w kodzie)
+        getDocs(query(collection(db, 'teacherSurveys'), where('teacherId', '==', user.uid), limit(20))).catch(() => ({ docs: [] }))
       ]);
       
       const teacherStudentEmails = studentsSnapshot.docs.map(doc => doc.data().email).filter(Boolean);
       
-      // 2. Oceny
-      gradesSnapshot.docs.forEach(doc => {
+      // 2. Oceny - sortuj po dacie w kodzie
+      const grades = gradesSnapshot.docs.map(doc => {
         const grade = doc.data();
-        activities.push({
+        const date = parseDate(grade.graded_at);
+        return {
           id: `grade-given-${doc.id}`,
-          type: 'grade',
+          type: 'grade' as const,
           title: 'Ocena wystawiona',
           description: `Wystawiono ocenę ${grade.value || grade.grade} z ${grade.subject || 'przedmiotu'} dla ${grade.studentName || 'ucznia'}`,
           timestamp: parseTimestamp(grade.graded_at),
-          icon: Award
-        });
-      });
+          icon: Award,
+          _sortDate: date // Tymczasowe pole do sortowania
+        };
+      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 5).map(({ _sortDate, ...activity }) => activity);
+      activities.push(...grades);
       
-      // 3. Czat
-      chatSnapshot.docs.forEach(doc => {
-        const message = doc.data();
-        activities.push({
-          id: `chat-message-${doc.id}`,
-          type: 'assignment',
-          title: 'Wiadomość w czacie',
-          description: `Wysłano wiadomość w czacie grupowym: "${message.text?.substring(0, 50)}${message.text?.length > 50 ? '...' : ''}"`,
-          timestamp: parseTimestamp(message.timestamp),
-          icon: MessageSquare
-        });
-      });
+      // 3. Czat - tymczasowo wyłączone (wymaga indeksu)
+      // chatSnapshot.docs.forEach(doc => { ... });
       
-      // 4. Quizy
-      quizzesSnapshot.docs.forEach(doc => {
+      // 4. Quizy - sortuj po dacie w kodzie
+      const quizzes = quizzesSnapshot.docs.map(doc => {
         const quiz = doc.data();
-        activities.push({
+        const date = parseDate(quiz.created_at);
+        return {
           id: `quiz-created-${doc.id}`,
-          type: 'quiz',
+          type: 'quiz' as const,
           title: 'Quiz utworzony',
           description: `Utworzono quiz "${quiz.title}" dla kursu "${quiz.subject || 'nieznanego'}"`,
           timestamp: parseTimestamp(quiz.created_at),
-          icon: Award
-        });
-      });
+          icon: Award,
+          _sortDate: date // Tymczasowe pole do sortowania
+        };
+      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 3).map(({ _sortDate, ...activity }) => activity);
+      activities.push(...quizzes);
       
-      // 5. Ankiety
-      surveysSnapshot.docs.forEach(doc => {
+      // 5. Ankiety - sortuj po dacie w kodzie
+      const surveys = surveysSnapshot.docs.map(doc => {
         const survey = doc.data();
-        activities.push({
+        const date = parseDate(survey.submittedAt);
+        return {
           id: `survey-${doc.id}`,
-          type: 'survey',
+          type: 'survey' as const,
           title: 'Ankieta wypełniona',
           description: `Uczeń wypełnił ankietę oceniającą - średnia ocena: ${survey.averageScore?.toFixed(1) || 'N/A'}/10`,
           timestamp: parseTimestamp(survey.submittedAt),
-          icon: Award
-        });
-      });
+          icon: Award,
+          _sortDate: date // Tymczasowe pole do sortowania
+        };
+      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 3).map(({ _sortDate, ...activity }) => activity);
+      activities.push(...surveys);
       
       // 6. Quizy ukończone przez uczniów (tylko jeśli są uczniowie)
       if (teacherStudentEmails.length > 0 && courses.length > 0) {
@@ -351,20 +352,28 @@ export default function TeacherDashboard() {
         index === self.findIndex(a => a.id === activity.id)
       );
       
-      setRecentActivities(uniqueActivities.slice(0, 10));
+      const finalActivities = uniqueActivities.slice(0, 10);
+      console.log('📊 Setting recent activities:', finalActivities.length, finalActivities);
+      setRecentActivities(finalActivities);
       
     } catch (error) {
-      console.error('Error fetching recent activities:', error);
+      console.error('❌ Error fetching recent activities:', error);
+      setRecentActivities([]); // Ustaw puste w przypadku błędu
     }
   }, [user]);
 
   useEffect(() => {
     if (user?.email) {
+      console.log('🔄 useEffect triggered, fetching stats and activities...');
       Promise.all([fetchStats(), fetchRecentActivities()]).finally(() => {
         setLoading(false);
+        console.log('✅ Stats and activities loaded');
       });
+    } else {
+      console.log('⏸️ User not available, skipping fetch');
+      setLoading(false);
     }
-  }, [user, fetchStats, fetchRecentActivities]);
+  }, [user?.email, user?.uid, fetchStats, fetchRecentActivities]);
 
   // Memoizuj statCards aby uniknąć niepotrzebnych re-renderów
   const statCards: StatCard[] = useMemo(() => [
@@ -383,13 +392,6 @@ export default function TeacherDashboard() {
       color: "bg-green-500"
     },
     {
-      title: "Oceny do sprawdzenia",
-      value: stats.gradesToCheck.toString(),
-      description: "oczekuje na ocenę",
-      icon: ClipboardList,
-      color: "bg-orange-500"
-    },
-    {
       title: "Średnia ocen",
       value: stats.averageGrade.toFixed(1),
       description: "+0.3 w tym miesiącu",
@@ -397,7 +399,7 @@ export default function TeacherDashboard() {
       trend: "up",
       color: "bg-purple-500"
     },
-  ], [stats.courses, stats.students, stats.gradesToCheck, stats.averageGrade]);
+  ], [stats.courses, stats.students, stats.averageGrade]);
 
   if (loading) {
     return (
@@ -420,7 +422,7 @@ export default function TeacherDashboard() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           const isCoursesCard = stat.title === "Moje Kursy";
@@ -428,7 +430,7 @@ export default function TeacherDashboard() {
           const isClickableCard = isCoursesCard || isStudentsCard;
           
           const cardContent = (
-            <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-6 ${isClickableCard ? 'hover:shadow-md hover:border-blue-300 transition-all duration-200 cursor-pointer' : ''}`}>
+            <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-6 h-full flex flex-col ${isClickableCard ? 'hover:shadow-md hover:border-blue-300 transition-all duration-200 cursor-pointer' : ''}`}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-medium text-gray-500">{stat.title}</h3>
                 <div className={`p-2 rounded-lg ${stat.color}`}>
@@ -436,7 +438,7 @@ export default function TeacherDashboard() {
                 </div>
               </div>
               <div className="text-2xl font-bold text-gray-900 mb-1">{stat.value}</div>
-              <p className="text-xs text-gray-600 flex items-center">
+              <p className="text-xs text-gray-600 flex items-center mt-auto">
                 {stat.trend === "up" && <TrendingUp className="inline h-3 w-3 mr-1 text-green-500" />}
                 {stat.description}
               </p>
@@ -445,19 +447,19 @@ export default function TeacherDashboard() {
           
           if (isCoursesCard) {
             return (
-              <Link key={index} href="/homelogin/teacher/courses">
+              <Link key={index} href="/homelogin/teacher/courses" className="h-full">
                 {cardContent}
               </Link>
             );
           } else if (isStudentsCard) {
             return (
-              <Link key={index} href="/homelogin/teacher/students">
+              <Link key={index} href="/homelogin/teacher/students" className="h-full">
                 {cardContent}
               </Link>
             );
           } else {
             return (
-              <div key={index}>
+              <div key={index} className="h-full">
                 {cardContent}
               </div>
             );
@@ -556,9 +558,17 @@ export default function TeacherDashboard() {
                 <p className="text-sm text-gray-600">Co robiłeś w systemie - kursy, oceny, quizy, czat</p>
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  console.log('🔄 Refreshing activities...');
                   setLoading(true);
-                  fetchRecentActivities().finally(() => setLoading(false));
+                  try {
+                    await fetchRecentActivities();
+                    console.log('✅ Activities refreshed');
+                  } catch (error) {
+                    console.error('❌ Error refreshing activities:', error);
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
                 className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1"
               >
@@ -573,7 +583,10 @@ export default function TeacherDashboard() {
                 {tabs.map((tab) => (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      console.log('🔘 Tab clicked:', tab.id);
+                      setActiveTab(tab.id);
+                    }}
                     className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors ${
                       activeTab === tab.id
                         ? 'bg-blue-100 text-blue-700 border border-blue-200'

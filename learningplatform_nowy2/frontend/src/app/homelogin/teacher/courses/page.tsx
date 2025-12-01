@@ -60,6 +60,12 @@ export default function TeacherCourses() {
   });
   const [creatingCourse, setCreatingCourse] = useState(false);
   
+  // States for copying course
+  const [showCopyCourseModal, setShowCopyCourseModal] = useState(false);
+  const [copyCourseSearchTerm, setCopyCourseSearchTerm] = useState('');
+  const [copyCourseSortBy, setCopyCourseSortBy] = useState<'title' | 'created_at' | 'subject'>('title');
+  const [copyCourseSortOrder, setCopyCourseSortOrder] = useState<'asc' | 'desc'>('asc');
+  
   // State dla wyszukiwarki i filtrowania
   const [searchTerm, setSearchTerm] = useState('');
   const [courseTypeFilter, setCourseTypeFilter] = useState<'wszystkie' | 'obowiązkowy' | 'fakultatywny'>('wszystkie');
@@ -396,6 +402,18 @@ export default function TeacherCourses() {
     try {
       console.log('Creating new course:', newCourse);
       
+      // Sprawdź czy kurs o takiej samej nazwie już istnieje
+      const firestoreModule = await import('firebase/firestore');
+      const coursesRef = firestoreModule.collection(db, 'courses');
+      const titleQuery = firestoreModule.query(coursesRef, firestoreModule.where('title', '==', newCourse.title.trim()));
+      const titleSnapshot = await firestoreModule.getDocs(titleQuery);
+      
+      if (!titleSnapshot.empty) {
+        setError('Kurs o takiej nazwie już istnieje. Musisz wybrać inną nazwę.');
+        setCreatingCourse(false);
+        return;
+      }
+      
       // Generate slug from title
       const generateSlug = (title: string) => {
         return title
@@ -434,8 +452,7 @@ export default function TeacherCourses() {
         courseTypeType: typeof courseData.courseType
       });
       
-      const { addDoc, collection } = await import('firebase/firestore');
-      const docRef = await addDoc(collection(db, 'courses'), courseData);
+      const docRef = await firestoreModule.addDoc(firestoreModule.collection(db, 'courses'), courseData);
       
       console.log('Course created successfully with ID:', docRef.id);
       
@@ -465,6 +482,177 @@ export default function TeacherCourses() {
       setCreatingCourse(false);
     }
   }, [newCourse, user, clearCache, fetchCourses]);
+
+  // Function to copy course
+  const handleCopyCourse = useCallback(async (sourceCourseId: string) => {
+    if (!user?.email) {
+      setError('Nie można zidentyfikować użytkownika');
+      return;
+    }
+
+    setCreatingCourse(true);
+    setError(null);
+    setShowCopyCourseModal(false);
+
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      const sourceCourseRef = doc(db, 'courses', sourceCourseId);
+      const sourceCourseSnap = await getDoc(sourceCourseRef);
+
+      if (!sourceCourseSnap.exists()) {
+        setError('Kurs źródłowy nie został znaleziony');
+        return;
+      }
+
+      const sourceCourseData = sourceCourseSnap.data();
+      
+      console.log('📋 [DEBUG] Copying course:', {
+        sourceCourseId: sourceCourseId,
+        sourceTitle: sourceCourseData.title,
+        sourceAssignedUsers: sourceCourseData.assignedUsers || [],
+        sourceAssignedClasses: sourceCourseData.assignedClasses || [],
+        sourceTeacherEmail: sourceCourseData.teacherEmail,
+        sourceCreatedBy: sourceCourseData.created_by
+      });
+      
+      // Generate slug from title
+      const generateSlug = (title: string) => {
+        return title
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-')
+          .trim();
+      };
+
+      // Wymuś nową nazwę - dodaj " (Kopia)" jeśli nie ma
+      let newTitle = sourceCourseData.title.includes(' (Kopia)')
+        ? sourceCourseData.title.replace(' (Kopia)', '') + ' (Kopia 2)'
+        : sourceCourseData.title + ' (Kopia)';
+      
+      // Sprawdź czy kurs o takiej nazwie już istnieje i znajdź unikalną nazwę
+      const firestoreModuleCopy = await import('firebase/firestore');
+      const coursesRef = firestoreModuleCopy.collection(db, 'courses');
+      let counter = 2;
+      let titleQuery = firestoreModuleCopy.query(coursesRef, firestoreModuleCopy.where('title', '==', newTitle));
+      let titleSnapshot = await firestoreModuleCopy.getDocs(titleQuery);
+      
+      while (!titleSnapshot.empty) {
+        const baseTitle = sourceCourseData.title.includes(' (Kopia)')
+          ? sourceCourseData.title.replace(/ \(Kopia.*\)$/, '')
+          : sourceCourseData.title;
+        newTitle = `${baseTitle} (Kopia ${counter})`;
+        counter++;
+        titleQuery = firestoreModuleCopy.query(coursesRef, firestoreModuleCopy.where('title', '==', newTitle));
+        titleSnapshot = await firestoreModuleCopy.getDocs(titleQuery);
+        
+        // Zabezpieczenie przed nieskończoną pętlą
+        if (counter > 100) {
+          newTitle = `${baseTitle} (Kopia ${Date.now()})`;
+          break;
+        }
+      }
+      
+      const slug = generateSlug(newTitle);
+
+      // Kopiuj dane kursu, ale z nową nazwą i czystymi danymi
+      // WAŻNE: Nie kopiujemy ID - Firestore automatycznie utworzy nowe ID przy addDoc
+      const courseData = {
+        title: newTitle,
+        description: sourceCourseData.description || '',
+        subject: sourceCourseData.subject || '',
+        year_of_study: sourceCourseData.year_of_study || 1,
+        teacherEmail: user.email,
+        instructor_name: sourceCourseData.instructor_name || '',
+        category_name: sourceCourseData.category_name || '',
+        courseType: sourceCourseData.courseType || 'obowiązkowy',
+        created_by: user.email,
+        assignedUsers: [], // Nowy kurs nie ma przypisanych użytkowników - MUSI być przypisany ponownie
+        assignedClasses: sourceCourseData.assignedClasses ? [...sourceCourseData.assignedClasses] : [], // Kopiuj klasy
+        sections: sourceCourseData.sections ? JSON.parse(JSON.stringify(sourceCourseData.sections)) : [], // Głęboka kopia sekcji
+        pdfUrls: sourceCourseData.pdfUrls ? [...sourceCourseData.pdfUrls] : [],
+        links: sourceCourseData.links ? [...sourceCourseData.links] : [],
+        slug: slug,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('💾 [DEBUG] New course data to be saved:', {
+        title: courseData.title,
+        assignedUsers: courseData.assignedUsers,
+        assignedClasses: courseData.assignedClasses,
+        teacherEmail: courseData.teacherEmail,
+        createdBy: courseData.created_by,
+        slug: courseData.slug
+      });
+
+      // Usuń submissions z sekcji typu assignment (nowy kurs nie powinien mieć starych zgłoszeń)
+      if (courseData.sections && Array.isArray(courseData.sections)) {
+        courseData.sections = courseData.sections.map((section: any) => {
+          if (section.type === 'assignment' && section.submissions) {
+            return { ...section, submissions: [] };
+          }
+          return section;
+        });
+      }
+
+      // Tworzymy NOWY dokument z NOWYM ID - addDoc automatycznie tworzy nowe ID
+      const docRef = await firestoreModuleCopy.addDoc(firestoreModuleCopy.collection(db, 'courses'), courseData);
+      
+      console.log('✅ [DEBUG] Course copied successfully!', {
+        oldCourseId: sourceCourseId,
+        oldTitle: sourceCourseData.title,
+        newCourseId: docRef.id,
+        newTitle: newTitle,
+        assignedUsers: courseData.assignedUsers,
+        assignedClasses: courseData.assignedClasses,
+        teacherEmail: courseData.teacherEmail
+      });
+      
+      // Zweryfikuj, że nowy kurs został utworzony z nowym ID
+      const verifyDoc = await firestoreModuleCopy.getDoc(firestoreModuleCopy.doc(db, 'courses', docRef.id));
+      if (verifyDoc.exists()) {
+        const verifyData = verifyDoc.data();
+        console.log('✅ [DEBUG] Verification - New course exists:', {
+          id: docRef.id,
+          title: verifyData.title,
+          assignedUsers: verifyData.assignedUsers,
+          assignedClasses: verifyData.assignedClasses
+        });
+      } else {
+        console.error('❌ [DEBUG] Verification failed - New course does not exist!');
+      }
+
+      setSuccess('Kurs został pomyślnie skopiowany!');
+      
+      // Wypełnij formularz danymi skopiowanego kursu (ale z nową nazwą)
+      setNewCourse({
+        title: newTitle,
+        description: courseData.description,
+        subject: courseData.subject,
+        year_of_study: courseData.year_of_study,
+        instructor_name: courseData.instructor_name,
+        category_name: courseData.category_name,
+        courseType: courseData.courseType as 'obowiązkowy' | 'fakultatywny'
+      });
+      
+      setShowCreateCourse(true);
+      
+      // Refresh courses list
+      clearCache();
+      fetchCourses(1, false);
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(null), 3000);
+      
+    } catch (error) {
+      console.error('Error copying course:', error);
+      setError('Błąd podczas kopiowania kursu. Spróbuj ponownie.');
+    } finally {
+      setCreatingCourse(false);
+    }
+  }, [user, clearCache, fetchCourses]);
 
 
   // Filtruj kursy gdy zmienia się searchTerm, courseTypeFilter lub courses
@@ -760,6 +948,12 @@ export default function TeacherCourses() {
                 </button>
               </div>
               
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
+              
               <form onSubmit={handleCreateCourse} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -867,6 +1061,20 @@ export default function TeacherCourses() {
                   </p>
                 </div>
                 
+                <div className="pt-4 border-t border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCreateCourse(false);
+                      setShowCopyCourseModal(true);
+                    }}
+                    className="w-full mb-3 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Dodaj na podstawie innego kursu
+                  </button>
+                </div>
+                
                 <div className="flex gap-3 pt-4">
                   <button
                     type="submit"
@@ -892,6 +1100,141 @@ export default function TeacherCourses() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal wyboru kursu do skopiowania */}
+      {showCopyCourseModal && (
+        <div className="fixed inset-0 bg-gray-900/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                    <BookOpen className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900">Wybierz kurs do skopiowania</h2>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowCopyCourseModal(false);
+                    setCopyCourseSearchTerm('');
+                  }}
+                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors group"
+                >
+                  <span className="text-gray-500 group-hover:text-gray-700 text-lg font-medium">×</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 flex-1 overflow-y-auto">
+              {/* Wyszukiwarka i sortowanie */}
+              <div className="mb-4 space-y-3">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={copyCourseSearchTerm}
+                    onChange={(e) => setCopyCourseSearchTerm(e.target.value)}
+                    className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Szukaj kursu po nazwie, przedmiocie..."
+                  />
+                  <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+                </div>
+                
+                <div className="flex gap-3">
+                  <select
+                    value={copyCourseSortBy}
+                    onChange={(e) => setCopyCourseSortBy(e.target.value as 'title' | 'created_at' | 'subject')}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="title">Sortuj według nazwy</option>
+                    <option value="created_at">Sortuj według daty utworzenia</option>
+                    <option value="subject">Sortuj według przedmiotu</option>
+                  </select>
+                  <button
+                    onClick={() => setCopyCourseSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    {copyCourseSortOrder === 'asc' ? '↑ Rosnąco' : '↓ Malejąco'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Lista kursów */}
+              <div className="space-y-2">
+                {(() => {
+                  // Filtruj i sortuj kursy
+                  let filtered = courses.filter(course => {
+                    const searchLower = copyCourseSearchTerm.toLowerCase();
+                    const titleMatch = course.title?.toLowerCase().includes(searchLower);
+                    const subjectMatch = course.subject?.toLowerCase().includes(searchLower);
+                    const descriptionMatch = course.description?.toLowerCase().includes(searchLower);
+                    return titleMatch || subjectMatch || descriptionMatch;
+                  });
+
+                  // Sortuj
+                  filtered.sort((a, b) => {
+                    let aValue: any;
+                    let bValue: any;
+
+                    if (copyCourseSortBy === 'title') {
+                      aValue = a.title?.toLowerCase() || '';
+                      bValue = b.title?.toLowerCase() || '';
+                    } else if (copyCourseSortBy === 'created_at') {
+                      aValue = new Date(a.created_at || 0).getTime();
+                      bValue = new Date(b.created_at || 0).getTime();
+                    } else if (copyCourseSortBy === 'subject') {
+                      aValue = a.subject?.toLowerCase() || '';
+                      bValue = b.subject?.toLowerCase() || '';
+                    }
+
+                    if (copyCourseSortOrder === 'asc') {
+                      return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+                    } else {
+                      return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+                    }
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="text-center py-8 text-gray-500">
+                        {copyCourseSearchTerm ? 'Nie znaleziono kursów pasujących do wyszukiwania' : 'Brak dostępnych kursów'}
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((course) => (
+                    <div
+                      key={course.id}
+                      onClick={() => handleCopyCourse(course.id)}
+                      className="p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-900 mb-1">{course.title}</h3>
+                          <p className="text-sm text-gray-600 mb-2 line-clamp-2">{course.description}</p>
+                          <div className="flex items-center gap-3 text-xs text-gray-500">
+                            <span>{course.subject}</span>
+                            <span>•</span>
+                            <span>Rok {course.year_of_study}</span>
+                            {course.sections && (
+                              <>
+                                <span>•</span>
+                                <span>{course.sections.length} sekcji</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <button className="ml-4 px-3 py-1 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                          Skopiuj
+                        </button>
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
             </div>
           </div>
         </div>

@@ -147,17 +147,22 @@ service cloud.firestore {
     }
     
     // Powiadomienia - nauczyciele mogą tworzyć, użytkownicy mogą czytać swoje
+    // Rodzice mogą czytać i aktualizować powiadomienia (widzą tylko powiadomienia swoich dzieci - filtrowane w kodzie)
     match /notifications/{notificationId} {
       allow read: if request.auth != null && (
         request.auth.uid == resource.data.user_id || 
         request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+        request.auth.token.role == 'teacher' ||
+        request.auth.token.role == 'parent'
       );
       allow create: if request.auth != null && (
         request.auth.token.role == 'admin' || 
         request.auth.token.role == 'teacher'
       );
-      allow update: if request.auth != null && request.auth.uid == resource.data.user_id;
+      allow update: if request.auth != null && (
+        request.auth.uid == resource.data.user_id ||
+        request.auth.token.role == 'parent'
+      );
       allow delete: if request.auth != null && (
         request.auth.token.role == 'admin' || 
         request.auth.token.role == 'teacher'
@@ -185,14 +190,16 @@ service cloud.firestore {
         request.auth.uid == resource.data.from || 
         request.auth.uid == resource.data.to ||
         request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+        request.auth.token.role == 'teacher' ||
+        request.auth.token.role == 'parent'
       );
       allow create: if request.auth != null && request.auth.uid == request.resource.data.from;
       allow update: if request.auth != null && (
         request.auth.uid == resource.data.from ||
         request.auth.uid == resource.data.to ||
         request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+        request.auth.token.role == 'teacher' ||
+        request.auth.token.role == 'parent'
       );
       allow delete: if request.auth != null && (
         request.auth.uid == resource.data.from ||

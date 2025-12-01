@@ -386,6 +386,23 @@ def set_admin_role(request):
             print(f"Error in set_admin_role endpoint: {str(e)}")
             return JsonResponse({'error': f'Internal server error: {str(e)}'}, status=500)
 
+@csrf_exempt
+def set_parent_role(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            uid = data.get('uid')
+            if not uid:
+                return JsonResponse({'error': 'No UID provided'}, status=400)
+            success = set_user_role(uid, 'parent')
+            if success:
+                return JsonResponse({'status': 'parent role set'})
+            else:
+                return JsonResponse({'error': 'Failed to set parent role - check Firebase credentials'}, status=500)
+        except Exception as e:
+            print(f"Error in set_parent_role endpoint: {str(e)}")
+            return JsonResponse({'error': f'Internal server error: {str(e)}'}, status=500)
+
 @staff_member_required
 @csrf_exempt
 def set_student_role(request):
