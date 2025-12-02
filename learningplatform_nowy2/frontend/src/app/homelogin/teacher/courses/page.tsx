@@ -642,7 +642,8 @@ export default function TeacherCourses() {
         year_of_study: courseData.year_of_study,
         instructor_name: courseData.instructor_name,
         category_name: courseData.category_name,
-        courseType: courseData.courseType as 'obowiązkowy' | 'fakultatywny'
+        courseType: courseData.courseType as 'obowiązkowy' | 'fakultatywny',
+        iconUrl: courseData.iconUrl || ''
       });
       
       setShowCreateCourse(true);
@@ -1192,7 +1193,7 @@ export default function TeacherCourses() {
               <div className="space-y-2">
                 {(() => {
                   // Filtruj i sortuj kursy
-                  let filtered = courses.filter(course => {
+                  const filtered = courses.filter(course => {
                     const searchLower = copyCourseSearchTerm.toLowerCase();
                     const titleMatch = course.title?.toLowerCase().includes(searchLower);
                     const subjectMatch = course.subject?.toLowerCase().includes(searchLower);

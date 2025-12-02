@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../../context/AuthContext';
-import Image from "next/image";
 import Link from "next/link";
 import Providers from '@/components/Providers';
 import { db } from "@/config/firebase";
@@ -133,7 +132,8 @@ function SuperAdminDashboardContent() {
   const [teacherInstructorType, setTeacherInstructorType] = useState<string>("");
   const [teacherSpecialization, setTeacherSpecialization] = useState<string>("");
   const [editCourseStudents, setEditCourseStudents] = useState<string[]>([]);
-  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
+  // const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]); // Zakomentowane - nie używane
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -252,7 +252,8 @@ function SuperAdminDashboardContent() {
         index === self.findIndex(a => a.id === activity.id)
       );
 
-      setRecentActivities(uniqueActivities.slice(0, 4));
+      // setRecentActivities(uniqueActivities.slice(0, 4)); // Zakomentowane - nie używane
+      console.log('Recent activities:', uniqueActivities.slice(0, 4));
       
     } catch (error) {
       console.error('Error fetching recent activities:', error);

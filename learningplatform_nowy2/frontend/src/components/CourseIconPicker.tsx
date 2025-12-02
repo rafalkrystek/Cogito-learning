@@ -36,8 +36,8 @@ export default function CourseIconPicker({
     setMounted(true);
   }, []);
 
-  // Lista ikon z lokalnego katalogu
-  const localIcons: CourseIcon[] = [
+  // Lista ikon z lokalnego katalogu - useMemo zapobiega rekre acji tablicy przy każdym renderze
+  const localIcons: CourseIcon[] = React.useMemo(() => [
     { id: 'biologia', name: 'Biologia', url: '/course-icons/Biologia.png', category: 'Nauki przyrodnicze' },
     { id: 'biznes', name: 'Biznes i zarządzanie', url: '/course-icons/Biznes i zarządzanie.png', category: 'Biznes' },
     { id: 'chemia', name: 'Chemia', url: '/course-icons/Chemia.png', category: 'Nauki przyrodnicze' },
@@ -70,7 +70,7 @@ export default function CourseIconPicker({
     { id: 'szachy', name: 'Szachy', url: '/course-icons/Szachy.png', category: 'Rozrywka' },
     { id: 'wychowanie-fizyczne', name: 'Wychowanie fizyczne', url: '/course-icons/Wychowanie fizyczne.png', category: 'Sport' },
     { id: 'zarzadzanie', name: 'Zarządzanie', url: '/course-icons/Zarządzenie.png', category: 'Biznes' }
-  ];
+  ], []);
 
   useEffect(() => {
     const initializeIcons = async () => {
@@ -115,7 +115,7 @@ export default function CourseIconPicker({
     };
 
     initializeIcons();
-  }, []);
+  }, [localIcons]);
 
   const filteredIcons = icons.filter(icon =>
     icon.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

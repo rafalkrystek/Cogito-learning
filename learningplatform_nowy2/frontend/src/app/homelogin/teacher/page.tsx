@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { db } from '@/config/firebase';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import TutorManagement from '@/components/TutorManagement';
 import {
   BookOpen,
@@ -250,7 +250,7 @@ export default function TeacherDashboard() {
       
       // 2-7. Pobierz wszystkie aktywności równolegle
       // Uwaga: Usuwamy orderBy z zapytań, które wymagają indeksu - sortowanie zrobimy w kodzie
-      const [gradesSnapshot, chatSnapshot, quizzesSnapshot, studentsSnapshot, surveysSnapshot] = await Promise.all([
+      const [gradesSnapshot, , quizzesSnapshot, studentsSnapshot, surveysSnapshot] = await Promise.all([
         // Oceny - bez orderBy (sortowanie w kodzie)
         getDocs(query(collection(db, 'grades'), where('graded_by', '==', user.email), limit(20))).catch(() => ({ docs: [] })),
         // Czat - bez orderBy (sortowanie w kodzie) - usuwamy to zapytanie, bo wymaga indeksu
@@ -275,9 +275,9 @@ export default function TeacherDashboard() {
           description: `Wystawiono ocenę ${grade.value || grade.grade} z ${grade.subject || 'przedmiotu'} dla ${grade.studentName || 'ucznia'}`,
           timestamp: parseTimestamp(grade.graded_at),
           icon: Award,
-          _sortDate: date // Tymczasowe pole do sortowania
+          sortDate: date // Pole do sortowania
         };
-      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 5).map(({ _sortDate, ...activity }) => activity);
+      }).sort((a, b) => b.sortDate.getTime() - a.sortDate.getTime()).slice(0, 5).map(({ sortDate, ...activity }) => { void sortDate; return activity; });
       activities.push(...grades);
       
       // 3. Czat - tymczasowo wyłączone (wymaga indeksu)
@@ -294,9 +294,9 @@ export default function TeacherDashboard() {
           description: `Utworzono quiz "${quiz.title}" dla kursu "${quiz.subject || 'nieznanego'}"`,
           timestamp: parseTimestamp(quiz.created_at),
           icon: Award,
-          _sortDate: date // Tymczasowe pole do sortowania
+          sortDate: date // Pole do sortowania
         };
-      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 3).map(({ _sortDate, ...activity }) => activity);
+      }).sort((a, b) => b.sortDate.getTime() - a.sortDate.getTime()).slice(0, 3).map(({ sortDate: _, ...activity }) => { void _; return activity; });
       activities.push(...quizzes);
       
       // 5. Ankiety - sortuj po dacie w kodzie
@@ -310,9 +310,9 @@ export default function TeacherDashboard() {
           description: `Uczeń wypełnił ankietę oceniającą - średnia ocena: ${survey.averageScore?.toFixed(1) || 'N/A'}/10`,
           timestamp: parseTimestamp(survey.submittedAt),
           icon: Award,
-          _sortDate: date // Tymczasowe pole do sortowania
+          sortDate: date // Pole do sortowania
         };
-      }).sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime()).slice(0, 3).map(({ _sortDate, ...activity }) => activity);
+      }).sort((a, b) => b.sortDate.getTime() - a.sortDate.getTime()).slice(0, 3).map(({ sortDate: __, ...activity }) => { void __; return activity; });
       activities.push(...surveys);
       
       // 6. Quizy ukończone przez uczniów (tylko jeśli są uczniowie)

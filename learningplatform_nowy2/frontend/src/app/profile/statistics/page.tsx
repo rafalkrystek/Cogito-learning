@@ -48,6 +48,7 @@ export default function StatisticsPage() {
   const [loading, setLoading] = useState(true);
   const [learningData, setLearningData] = useState<UserLearningData | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [gradesLoading, setGradesLoading] = useState(true);
   const [isDark, setIsDark] = useState(false);
 

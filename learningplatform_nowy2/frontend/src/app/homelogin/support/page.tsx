@@ -490,7 +490,7 @@ export default function FAQPage() {
               })
             ) : (
               <div className="col-span-2 text-center py-12">
-                <p className="text-gray-600 dark:text-gray-400 text-lg">Nie znaleziono wyników dla "{searchQuery}"</p>
+                <p className="text-gray-600 dark:text-gray-400 text-lg">Nie znaleziono wyników dla &ldquo;{searchQuery}&rdquo;</p>
                 <button
                   onClick={() => setSearchQuery("")}
                   className="mt-4 text-[#4067EC] hover:underline"

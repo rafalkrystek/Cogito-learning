@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from 'next/navigation';
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { doc, getDoc, updateDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db, storage } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -33,7 +33,7 @@ function ProfilePageContent() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // const fileInputRef = useRef<HTMLInputElement>(null); // Zakomentowane - nie używane
   const [learningData, setLearningData] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
   const [topBadges, setTopBadges] = useState<any[]>([]);

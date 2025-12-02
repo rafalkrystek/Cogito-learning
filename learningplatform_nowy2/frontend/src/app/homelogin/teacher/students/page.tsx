@@ -709,19 +709,20 @@ export default function StudentsPage() {
     console.log('🚀🚀🚀 handleClassSelect - KONIEC 🚀🚀🚀');
   };
 
-  const handleBackToClassSelection = () => {
-    console.log('🔍 handleBackToClassSelection - powrót do wyboru klasy');
-    setSelectedClass(null);
-    setShowClassSelection(true);
-    setStudents([]);
-    setSearchTerm('');
-    setFilters({
-      class: '',
-      gradeRange: '',
-      sortBy: 'name',
-      sortOrder: 'asc'
-    });
-  };
+  // Zakomentowane - nie używane obecnie
+  // const handleBackToClassSelection = () => {
+  //   console.log('🔍 handleBackToClassSelection - powrót do wyboru klasy');
+  //   setSelectedClass(null);
+  //   setShowClassSelection(true);
+  //   setStudents([]);
+  //   setSearchTerm('');
+  //   setFilters({
+  //     class: '',
+  //     gradeRange: '',
+  //     sortBy: 'name',
+  //     sortOrder: 'asc'
+  //   });
+  // };
 
   const getGradeColor = (grade: number) => {
     if (grade >= 4.5) return 'text-green-600';

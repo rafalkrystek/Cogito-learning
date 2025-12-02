@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuth } from '@/context/AuthContext';
@@ -55,6 +54,7 @@ export default function ParentDashboard() {
   const [events, setEvents] = useState<Event[]>([]);
   const [courses, setCourses] = useState<Map<string, { courseType?: string }>>(new Map());
   const [, setAssignedStudent] = useState<{ id: string; name: string } | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [currentWeek, setCurrentWeek] = useState(() => {
     const today = new Date();
     const day = today.getDay();
@@ -140,34 +140,34 @@ export default function ParentDashboard() {
     fetchData();
   }, [user]);
 
-  // Funkcje nawigacji tygodnia
-  const prevWeek = () => {
-    setCurrentWeek(prev => {
-      const newDate = new Date(prev);
-      newDate.setDate(newDate.getDate() - 7);
-      return newDate;
-    });
-  };
+  // Funkcje nawigacji tygodnia (zakomentowane - nie używane obecnie)
+  // const prevWeek = () => {
+  //   setCurrentWeek(prev => {
+  //     const newDate = new Date(prev);
+  //     newDate.setDate(newDate.getDate() - 7);
+  //     return newDate;
+  //   });
+  // };
 
-  const nextWeek = () => {
-    setCurrentWeek(prev => {
-      const newDate = new Date(prev);
-      newDate.setDate(newDate.getDate() + 7);
-      return newDate;
-    });
-  };
+  // const nextWeek = () => {
+  //   setCurrentWeek(prev => {
+  //     const newDate = new Date(prev);
+  //     newDate.setDate(newDate.getDate() + 7);
+  //     return newDate;
+  //   });
+  // };
 
-  // Funkcja formatująca zakres dat tygodnia
-  const formatDateRange = (date: Date): string => {
-    const monday = new Date(date);
-    const dayOfWeek = (monday.getDay() + 6) % 7;
-    monday.setDate(monday.getDate() - dayOfWeek);
-    
-    const friday = new Date(monday);
-    friday.setDate(friday.getDate() + 4);
-    
-    return `${monday.getDate()}-${friday.getDate()} ${monthsPl[monday.getMonth()]}${monday.getMonth() !== friday.getMonth() ? ' - ' + friday.getDate() + ' ' + monthsPl[friday.getMonth()] : ''}`;
-  };
+  // Funkcja formatująca zakres dat tygodnia (zakomentowane - nie używane obecnie)
+  // const formatDateRange = (date: Date): string => {
+  //   const monday = new Date(date);
+  //   const dayOfWeek = (monday.getDay() + 6) % 7;
+  //   monday.setDate(monday.getDate() - dayOfWeek);
+  //   
+  //   const friday = new Date(monday);
+  //   friday.setDate(friday.getDate() + 4);
+  //   
+  //   return `${monday.getDate()}-${friday.getDate()} ${monthsPl[monday.getMonth()]}${monday.getMonth() !== friday.getMonth() ? ' - ' + friday.getDate() + ' ' + monthsPl[friday.getMonth()] : ''}`;
+  // };
 
   // Funkcja sprawdzająca czy zajęcia są fakultatywne
   const isElectiveLesson = (event: Event): boolean => {
