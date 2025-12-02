@@ -35,6 +35,7 @@ interface Course {
   is_featured: boolean;
   assignedUsers?: string[];
   firebase_id?: string;
+  iconUrl?: string;
 }
 
 // Add Teacher interface
@@ -1002,7 +1003,7 @@ function Dashboard() {
         <div className="flex items-center gap-3 px-6 py-6 justify-between bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white rounded-br-2xl">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-              <Image src="/puzzleicon.png" alt="Logo" width={24} height={24} className="w-6 h-6" />
+              <Image src="/puzzleicon.png" alt="Logo" width={24} height={24} className="w-6 h-6 brightness-0 dark:brightness-100" />
             </div>
             <span className="text-lg font-bold">COGITO</span>
           </div>
@@ -1325,8 +1326,19 @@ function Dashboard() {
                     return (
                       <div key={course.id} className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-100 dark:border-gray-700 hover:shadow-xl dark:hover:shadow-gray-900/50 transition-all duration-300 group hover:border-gray-200 dark:hover:border-gray-600">
                         <div className="flex items-center gap-2 mb-3">
-                          <div className={`w-10 h-10 bg-gradient-to-r ${colorClass} rounded-lg flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-200`}>
-                            <Image src="/thumb.png" alt={course.title} width={20} height={20} className="w-5 h-5 rounded" loading="lazy" />
+                          <div className={`w-10 h-10 ${course.iconUrl ? 'bg-transparent' : `bg-gradient-to-r ${colorClass}`} rounded-lg flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-200 overflow-hidden`}>
+                            {course.iconUrl ? (
+                              <Image 
+                                src={course.iconUrl} 
+                                alt={course.title} 
+                                width={40} 
+                                height={40} 
+                                className="w-full h-full object-contain p-1" 
+                                loading="lazy" 
+                              />
+                            ) : (
+                              <Image src="/thumb.png" alt={course.title} width={20} height={20} className="w-5 h-5 rounded" loading="lazy" />
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <h3 className="font-bold text-gray-800 dark:text-gray-100 text-sm truncate group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{course.title}</h3>

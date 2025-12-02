@@ -169,7 +169,7 @@ export default function ParentStudentManagement() {
               </Link>
               
               <div className="flex items-center gap-2 min-w-0">
-                <Image src="/puzzleicon.png" alt="Logo" width={28} height={28} className="flex-shrink-0" />
+                <Image src="/puzzleicon.png" alt="Logo" width={28} height={28} className="flex-shrink-0 brightness-0 dark:brightness-100" />
                 <span className="text-lg sm:text-xl font-bold text-[#4067EC] truncate">COGITO</span>
               </div>
             </div>

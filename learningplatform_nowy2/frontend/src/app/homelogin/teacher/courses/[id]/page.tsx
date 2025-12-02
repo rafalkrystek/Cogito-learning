@@ -13,6 +13,7 @@ import YouTubePlayer from '@/components/YouTubePlayer';
 import dynamic from 'next/dynamic';
 import { ArrowLeft } from 'lucide-react';
 import { QuizAssignmentModal } from '@/components/QuizAssignmentModal';
+import CourseIconPicker from '@/components/CourseIconPicker';
 import { ReorderableSection } from '@/components/ReorderableSection';
 import { MathEditor } from '@/components/MathEditor';
 import MathView from '@/components/MathView';
@@ -51,6 +52,7 @@ interface Course {
   assigned_users: User[];
   instructor_name?: string;
   teacherEmail?: string;
+  iconUrl?: string;
 }
 
 interface SectionContent {
@@ -229,6 +231,9 @@ function TeacherCourseDetailContent() {
 
   // Banner state
   const [bannerUrl, setBannerUrl] = useState<string>("");
+  // Icon state
+  const [iconUrl, setIconUrl] = useState<string>("");
+  const [showIconPicker, setShowIconPicker] = useState(false);
   // Section state
   const [showSection, setShowSection] = useState<{[id:number]: boolean}>({});
   const [addingSection, setAddingSection] = useState(false);
@@ -899,6 +904,7 @@ function TeacherCourseDetailContent() {
           setCourse(data as Course);
           setSections(data.sections || []);
           setBannerUrl(data.bannerUrl || "");
+          setIconUrl(data.iconUrl || "");
           
           // Inicjalizuj sectionContents z danymi z sekcji
           const sectionsData = data.sections || [];
@@ -1054,6 +1060,22 @@ function TeacherCourseDetailContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections, courseId, newSection, user, saveSectionsToFirestore, refreshCourseData]);
 
+  // Icon change handler
+  const handleIconChange = useCallback(async (selectedIconUrl: string) => {
+    if (!courseId) return;
+    
+    try {
+      const courseRef = doc(db, "courses", String(courseId));
+      await updateDoc(courseRef, { iconUrl: selectedIconUrl });
+      setIconUrl(selectedIconUrl);
+      setCourse(prev => prev ? { ...prev, iconUrl: selectedIconUrl } : null);
+      console.log('Icon URL saved to Firestore:', selectedIconUrl);
+      setShowIconPicker(false);
+    } catch (error) {
+      console.error('Error saving icon URL:', error);
+      setError('Błąd podczas zapisywania ikony kursu');
+    }
+  }, [courseId]);
 
   // Banner upload handler
   const handleBannerChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2013,17 +2035,36 @@ function TeacherCourseDetailContent() {
             </div>
           )}
           
-          <label className="mt-4 inline-flex items-center gap-2 cursor-pointer bg-white/20 px-3 py-2 rounded-lg text-white font-semibold hover:bg-white/40 transition">
-            <FaImage />
-            <input type="file" accept="image/*" className="hidden" onChange={handleBannerChange} />
-            Zmień baner kursu
-          </label>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <label className="inline-flex items-center gap-2 cursor-pointer bg-white/20 px-3 py-2 rounded-lg text-white font-semibold hover:bg-white/40 transition">
+              <FaImage />
+              <input type="file" accept="image/*" className="hidden" onChange={handleBannerChange} />
+              Zmień baner kursu
+            </label>
+            <button
+              onClick={() => setShowIconPicker(!showIconPicker)}
+              className="inline-flex items-center gap-2 bg-white/20 px-3 py-2 rounded-lg text-white font-semibold hover:bg-white/40 transition"
+            >
+              <FaImage />
+              {iconUrl ? 'Zmień ikonę kursu' : 'Wybierz ikonę kursu'}
+            </button>
+          </div>
+          
+          {showIconPicker && (
+            <div className="mt-4 relative z-50 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-500 dark:border-blue-400 shadow-2xl">
+              <CourseIconPicker
+                selectedIconUrl={iconUrl}
+                onIconSelect={handleIconChange}
+                label="Wybierz ikonę kursu"
+              />
+            </div>
+          )}
         </div>
         <div className="hidden sm:block h-full">
           {bannerUrl ? (
             <Image src={bannerUrl} alt="Baner kursu" width={500} height={300} className="object-contain h-full w-auto opacity-80" />
           ) : (
-            <Image src="/puzzleicon.png" alt="Baner kursu" width={180} height={180} className="object-contain h-full w-auto opacity-60" />
+            <Image src="/puzzleicon.png" alt="Baner kursu" width={180} height={180} className="object-contain h-full w-auto opacity-60 brightness-0 dark:brightness-100" />
           )}
         </div>
       </div>

@@ -9,6 +9,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { collection, getDocs, query, where, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import ThemeToggle from '@/components/ThemeToggle';
+import CogitoLogo from '@/components/CogitoLogo';
 
 interface Notification {
   id: string;
@@ -201,8 +202,13 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         <div className="min-h-screen bg-[#F4F6FB] dark:bg-gray-900 flex flex-col transition-colors duration-200">
           {/* Minimalist Topbar */}
           <header className="w-full bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex items-center justify-between px-8 py-1 sticky top-0 z-50 h-14">
-            {/* Dashboard/Home link on the left */}
-            <Link href="/homelogin" className="text-[#4067EC] dark:text-blue-400 font-bold text-lg hover:underline mr-8">Dashboard</Link>
+            {/* Logo and Dashboard link on the left */}
+            <div className="flex items-center gap-3">
+              <Link href="/homelogin" className="flex items-center gap-2">
+                <CogitoLogo size={28} />
+                <span className="text-[#4067EC] dark:text-blue-400 font-bold text-lg hover:underline">COGITO</span>
+              </Link>
+            </div>
             <nav className="flex-1 flex items-center justify-center gap-8">
               {!isParent && (
                 <>

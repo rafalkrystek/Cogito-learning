@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -18,6 +19,7 @@ interface Course {
   lastAccessed: string;
   totalLessons: number;
   completedLessons: number;
+  iconUrl?: string;
 }
 
 function ParentCoursesContent() {
@@ -204,7 +206,8 @@ function ParentCoursesContent() {
                 progress: progress,
                 lastAccessed: lastAccessed || course.updated_at || course.created_at || new Date().toISOString(),
                 totalLessons: totalLessons,
-                completedLessons: completedLessons
+                completedLessons: completedLessons,
+                iconUrl: course.iconUrl || ''
               };
             })
         );
@@ -310,8 +313,18 @@ function ParentCoursesContent() {
                   <div key={course.id} className="bg-white rounded-xl border border-gray-200 hover:border-[#4067EC] transition-all duration-300 hover:shadow-lg overflow-hidden flex flex-col">
                     {/* Course Header */}
                     <div className="p-4 flex-1 flex flex-col">
-                      <div className="w-12 h-12 bg-[#4067EC] rounded-lg flex items-center justify-center text-white text-xl font-bold mb-3">
-                        {course.title.charAt(0).toUpperCase()}
+                      <div className={`w-12 h-12 ${course.iconUrl ? 'bg-transparent' : 'bg-[#4067EC]'} rounded-lg flex items-center justify-center text-white text-xl font-bold mb-3 overflow-hidden`}>
+                        {course.iconUrl ? (
+                          <Image
+                            src={course.iconUrl}
+                            alt={course.title || 'Course icon'}
+                            width={48}
+                            height={48}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          course.title.charAt(0).toUpperCase()
+                        )}
                       </div>
                       <h3 className="font-semibold text-base text-gray-800 mb-2 line-clamp-2">
                         {course.title}

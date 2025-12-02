@@ -1,5 +1,4 @@
 "use client";
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState, useRef } from 'react';
 import { doc, getDoc, updateDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
@@ -8,8 +7,15 @@ import { useAuth } from '../../context/AuthContext';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Providers from '@/components/Providers';
 import ThemeToggle from '@/components/ThemeToggle';
-import Link from 'next/link';
-import { ArrowLeft, BarChart3, LogOut, Camera, User, Mail, GraduationCap, Shield, BookOpen, Award, Trophy } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, User, Mail, GraduationCap, Shield, BookOpen, Award, Trophy, Phone, Edit2, Save, X } from 'lucide-react';
+
+// Import new components
+import ProfileHeader from '@/components/Profile/ProfileHeader';
+import StatCard from '@/components/Profile/StatCard';
+import BadgeCard from '@/components/Profile/BadgeCard';
+import InfoCard from '@/components/Profile/InfoCard';
+import ActionButton from '@/components/Profile/ActionButton';
+import Modal from '@/components/Profile/Modal';
 
 function ProfilePageContent() {
   const router = useRouter();
@@ -21,17 +27,22 @@ function ProfilePageContent() {
   const [, setUserClasses] = useState<string[]>([]);
   const [classNames, setClassNames] = useState<string[]>([]);
   const [photoURL, setPhotoURL] = useState('');
-  const [, setLoading] = useState(true);
-  const [hovered, setHovered] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [learningData, setLearningData] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
   const [topBadges, setTopBadges] = useState<any[]>([]);
+  const [showBadgeModal, setShowBadgeModal] = useState(false);
+  const [selectedBadge, setSelectedBadge] = useState<any>(null);
+  const [showStatsModal, setShowStatsModal] = useState(false);
+
+  // Check if user can edit (only students can edit their own profile)
+  const canEdit = user?.role === 'student';
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -182,8 +193,10 @@ function ProfilePageContent() {
           id: 'time-master',
           name: 'Mistrz Czasu',
           icon: '⏰',
+          description: 'Czas spędzony na nauce',
           currentLevel: calculateLevel(totalHours, [0, 10, 50, 100, 200]),
           currentProgress: Math.round(totalHours),
+          nextLevelThreshold: [10, 50, 100, 200, 200][calculateLevel(totalHours, [0, 10, 50, 100, 200])],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 10, gradient: 'from-gray-400 to-gray-500' },
@@ -196,8 +209,10 @@ function ProfilePageContent() {
           id: 'discipline',
           name: 'Dyscyplina',
           icon: '🔥',
+          description: 'Dni z rzędu z aktywnością',
           currentLevel: calculateLevel(streak, [0, 3, 7, 14, 30]),
           currentProgress: streak,
+          nextLevelThreshold: [3, 7, 14, 30, 30][calculateLevel(streak, [0, 3, 7, 14, 30])],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
@@ -210,8 +225,10 @@ function ProfilePageContent() {
           id: 'perfectionist',
           name: 'Perfekcjonista',
           icon: '⭐',
+          description: 'Średnia ocen',
           currentLevel: calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5]),
           currentProgress: Math.round(averageGrade * 10) / 10,
+          nextLevelThreshold: [3, 3.5, 4, 4.5, 5][calculateLevel(averageGrade, [0, 3, 3.5, 4, 4.5])],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 3, gradient: 'from-gray-400 to-gray-500' },
@@ -224,8 +241,10 @@ function ProfilePageContent() {
           id: 'explorer',
           name: 'Eksplorator',
           icon: '🗺️',
+          description: 'Dni aktywności',
           currentLevel: calculateLevel(daysActive, [0, 5, 15, 30, 60]),
           currentProgress: daysActive,
+          nextLevelThreshold: [5, 15, 30, 60, 60][calculateLevel(daysActive, [0, 5, 15, 30, 60])],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
@@ -238,8 +257,10 @@ function ProfilePageContent() {
           id: 'scholar',
           name: 'Uczony',
           icon: '📚',
+          description: 'Liczba otrzymanych ocen',
           currentLevel: calculateLevel(totalGrades, [0, 5, 15, 30, 50]),
           currentProgress: totalGrades,
+          nextLevelThreshold: [5, 15, 30, 50, 50][calculateLevel(totalGrades, [0, 5, 15, 30, 50])],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 5, gradient: 'from-gray-400 to-gray-500' },
@@ -252,11 +273,16 @@ function ProfilePageContent() {
           id: 'daily-learner',
           name: 'Dzień po Dniu',
           icon: '📅',
+          description: 'Średnia minut dziennie',
           currentLevel: calculateLevel(
             daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
             [0, 30, 60, 120, 180]
           ),
           currentProgress: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+          nextLevelThreshold: [30, 60, 120, 180, 180][calculateLevel(
+            daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0,
+            [0, 30, 60, 120, 180]
+          )],
           levels: [
             { name: 'Brąz', threshold: 0, gradient: 'from-amber-700 to-amber-800' },
             { name: 'Srebro', threshold: 30, gradient: 'from-gray-400 to-gray-500' },
@@ -296,10 +322,10 @@ function ProfilePageContent() {
       setUploadError(null);
       setUploadSuccess(false);
       
-          const storageRef = ref(storage, `profile_photos/${user.uid}`);
-          await uploadBytes(storageRef, file);
-          const url = await getDownloadURL(storageRef);
-          await updateDoc(doc(db, 'users', user.uid), { photoURL: url });
+      const storageRef = ref(storage, `profile_photos/${user.uid}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, 'users', user.uid), { photoURL: url });
       
       setPhotoURL(url);
       setUploadSuccess(true);
@@ -309,15 +335,9 @@ function ProfilePageContent() {
       }, 2000);
     } catch (error: unknown) {
       console.error('Error uploading photo:', error);
-        setUploadError('Błąd podczas przesyłania zdjęcia. Spróbuj ponownie.');
+      setUploadError('Błąd podczas przesyłania zdjęcia. Spróbuj ponownie.');
     } finally {
       setUploading(false);
-    }
-  };
-
-  const handlePhotoClick = () => {
-    if (fileInputRef.current) {
-      (fileInputRef.current as HTMLInputElement).click();
     }
   };
 
@@ -325,7 +345,6 @@ function ProfilePageContent() {
     sessionStorage.removeItem('firebaseToken');
     sessionStorage.removeItem('token');
     sessionStorage.removeItem('lastActivity');
-    // Kompatybilność wsteczna
     localStorage.removeItem('firebaseToken');
     localStorage.removeItem('token');
     router.push('/login');
@@ -336,31 +355,15 @@ function ProfilePageContent() {
   };
 
   const formatPhoneNumber = (value: string): string => {
-    // Usuń wszystkie znaki niebędące cyframi lub +
     const cleaned = value.replace(/[^\d+]/g, '');
-    
-    // Jeśli zaczyna się od +, zostaw jak jest
-    if (cleaned.startsWith('+')) {
-      return cleaned;
-    }
-    
-    // Jeśli zaczyna się od 0, zamień na +48
-    if (cleaned.startsWith('0')) {
-      return '+48' + cleaned.substring(1);
-    }
-    
-    // Jeśli zaczyna się od 48, dodaj +
-    if (cleaned.startsWith('48')) {
-      return '+' + cleaned;
-    }
-    
-    // W przeciwnym razie dodaj +48
+    if (cleaned.startsWith('+')) return cleaned;
+    if (cleaned.startsWith('0')) return '+48' + cleaned.substring(1);
+    if (cleaned.startsWith('48')) return '+' + cleaned;
     return '+48' + cleaned;
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Pozwól na wprowadzanie cyfr, spacji, + i -
     const cleaned = value.replace(/[^\d+\s-]/g, '');
     setPhone(cleaned);
   };
@@ -368,12 +371,9 @@ function ProfilePageContent() {
   const handleSaveProfile = async () => {
     if (!user) return;
     
-    // Walidacja numeru telefonu (jeśli został wprowadzony)
     let formattedPhone = phone.trim();
     if (formattedPhone) {
       formattedPhone = formatPhoneNumber(formattedPhone);
-      
-      // Sprawdź czy numer jest poprawny (min. 9 cyfr po +48)
       const phoneRegex = /^\+48\d{9}$/;
       if (!phoneRegex.test(formattedPhone)) {
         setSaveMessage({ 
@@ -392,20 +392,14 @@ function ProfilePageContent() {
         class: userClass
       };
       
-      // Dodaj telefon tylko jeśli został wprowadzony
       if (formattedPhone) {
         updateData.phone = formattedPhone;
       } else {
-        // Jeśli pole jest puste, usuń telefon z bazy
         updateData.phone = '';
       }
       
       await updateDoc(doc(db, 'users', user.uid), updateData);
-      
-      // Zaktualizuj stan telefonu
       setPhone(formattedPhone);
-      
-      // Pokaż komunikat o sukcesie
       setSaveMessage({ 
         type: 'success', 
         text: 'Profil został zaktualizowany pomyślnie!' 
@@ -422,406 +416,396 @@ function ProfilePageContent() {
     }
   };
 
+  // Calculate statistics
+  const totalHours = learningData ? Math.round(learningData.totalMinutes / 60) : 0;
+  const daysActive = learningData ? Object.keys(learningData.dailyStats || {}).length : 0;
+  const averageGrade = grades.length > 0 
+    ? grades.reduce((acc, g) => {
+        let value = 0;
+        if (typeof g.value === 'number') value = g.value;
+        else if (typeof g.value_grade === 'number') value = g.value_grade;
+        else if (typeof g.grade === 'number') value = g.grade;
+        else if (typeof g.grade === 'string') value = parseFloat(g.grade);
+        return acc + value;
+      }, 0) / grades.length 
+    : 0;
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-4 border-blue-600 border-t-transparent"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full">
-      {/* Header z przyciskiem powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200">
+      {/* Header */}
+      <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 lg:px-8 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
           <button
             onClick={() => router.push('/homelogin')}
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
           </button>
           
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Mój profil
           </h1>
           
-          {/* Theme Toggle - po prawej stronie */}
           <ThemeToggle />
         </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 w-full">
+        {/* Profile Header */}
+        <div className="mb-8">
+          <ProfileHeader
+            photoURL={photoURL}
+            displayName={displayName}
+            email={email}
+            classNames={classNames}
+            onPhotoChange={handlePhotoChange}
+            uploading={uploading}
+            uploadSuccess={uploadSuccess}
+            uploadError={uploadError}
+            canEdit={canEdit}
+          />
         </div>
 
-      {/* Główna zawartość */}
-      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 h-full">
-          
-          {/* Lewa kolumna - Profil */}
-          <div className="lg:col-span-1">
-            <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 p-6 lg:p-8 h-fit">
-              {/* Zdjęcie profilowe */}
-              <div className="flex flex-col items-center mb-6 lg:mb-8">
-                <div className="relative group mb-4" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-                  <div className="w-24 h-24 sm:w-32 sm:h-32 lg:w-40 lg:h-40 rounded-full overflow-hidden border-4 border-white shadow-xl">
-              <Image
-                src={photoURL || "/puzzleicon.png"}
-                alt="Profile picture"
-                      width={160}
-                      height={160}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-              <input
-                type="file"
-                accept="image/jpeg,image/png"
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                onChange={handlePhotoChange}
-              />
-              {hovered && (
-                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-full cursor-pointer transition-all duration-200" onClick={handlePhotoClick}>
-                      <Camera className="w-6 h-6 text-white" />
-                </div>
-              )}
-            </div>
-                
-                <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 text-center mb-2">
-                  {displayName || 'Brak imienia i nazwiska'}
-                </h2>
-                <p className="text-gray-600 text-center text-sm sm:text-base mb-2">
-                  {email || 'Brak adresu email'}
-                </p>
-                
-                {/* Wyświetl klasy */}
-                {classNames.length > 0 && (
-                  <div className="flex flex-wrap justify-center gap-1 mb-4">
-                    {classNames.map((className, index) => (
-                      <span key={index} className="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
-                        {className}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                
-                {/* Status uploadu */}
-            {uploading && (
-                  <div className="mt-4 text-blue-600 font-semibold text-sm sm:text-base animate-pulse">
-                    Przesyłanie zdjęcia...
-                  </div>
-            )}
-            {uploadSuccess && (
-                  <div className="mt-4 text-green-600 font-semibold text-sm sm:text-base">
-                    Zdjęcie zostało zaktualizowane!
-                  </div>
-            )}
-            {uploadError && (
-                  <div className="mt-4 text-red-600 font-semibold text-sm sm:text-base">
-                    {uploadError}
-                  </div>
-                )}
+        {/* Statistics Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
+          <StatCard
+            icon={BookOpen}
+            label="Kursy"
+            value={0}
+            gradient="from-blue-500 to-blue-600"
+            iconBg="bg-blue-500"
+            onClick={() => setShowStatsModal(true)}
+          />
+          <StatCard
+            icon={Award}
+            label="Średnia"
+            value={averageGrade > 0 ? averageGrade.toFixed(1) : '0.0'}
+            gradient="from-green-500 to-green-600"
+            iconBg="bg-green-500"
+          />
+          <StatCard
+            icon={BarChart3}
+            label="Godziny nauki"
+            value={totalHours}
+            sublabel="Łącznie"
+            gradient="from-purple-500 to-purple-600"
+            iconBg="bg-purple-500"
+          />
+          <StatCard
+            icon={Trophy}
+            label="Dni aktywności"
+            value={daysActive}
+            gradient="from-amber-500 to-amber-600"
+            iconBg="bg-amber-500"
+          />
+        </div>
 
-                
-              </div>
-
-              {/* Szybkie akcje */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+          {/* Left Column - Quick Actions */}
+          <div className="lg:col-span-1 space-y-4">
+            <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 dark:border-gray-700 p-6">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Szybkie akcje</h2>
               <div className="space-y-3">
-                <Link 
-                  href="/profile/statistics" 
-                  className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-200 ease-in-out shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <BarChart3 className="w-5 h-5 text-white" />
-                  <span className="font-semibold text-white">Statystyki nauki</span>
-                </Link>
-                
-                <Link 
+                <ActionButton
+                  icon={BarChart3}
+                  label="Statystyki nauki"
+                  href="/profile/statistics"
+                  gradient="from-blue-500 to-purple-600"
+                  hoverGradient="from-blue-600 to-purple-700"
+                />
+                <ActionButton
+                  icon={BookOpen}
+                  label="Moje kursy"
                   href={user?.role === 'student' ? '/homelogin/my-courses' : 
                         user?.role === 'teacher' ? '/homelogin/teacher/courses' : 
                         user?.role === 'parent' ? '/homelogin/parent/courses' : 
-                        '/homelogin/my-courses'} 
-                  className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-200 ease-in-out shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <BookOpen className="w-5 h-5 text-white" />
-                  <span className="font-semibold text-white">Moje kursy</span>
-                </Link>
-                
-                <Link 
-                  href="/homelogin/grades" 
-                  className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 ease-in-out shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <Award className="w-5 h-5 text-white" />
-                  <span className="font-semibold text-white">Dziennik ocen</span>
-                </Link>
-                
-                <button 
-                  onClick={handleChangePassword}
-                  className="flex items-center gap-3 w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 ease-in-out shadow-sm hover:shadow-md hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <Shield className="w-5 h-5" />
-                  <span className="font-semibold">Zmień hasło</span>
-                </button>
-                
-                
-                <button 
-                  onClick={handleLogout}
-                  className="flex items-center gap-3 w-full px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all duration-200 ease-in-out shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <LogOut className="w-5 h-5" />
-                  <span className="font-semibold">Wyloguj się</span>
-                </button>
+                        '/homelogin/my-courses'}
+                  gradient="from-green-500 to-emerald-600"
+                  hoverGradient="from-green-600 to-emerald-700"
+                />
+                <ActionButton
+                  icon={Award}
+                  label="Dziennik ocen"
+                  href="/homelogin/grades"
+                  gradient="from-amber-500 to-orange-600"
+                  hoverGradient="from-amber-600 to-orange-700"
+                />
+                {canEdit && (
+                  <>
+                    <ActionButton
+                      icon={Shield}
+                      label="Zmień hasło"
+                      onClick={handleChangePassword}
+                      gradient="from-gray-500 to-gray-600"
+                      hoverGradient="from-gray-600 to-gray-700"
+                    />
+                    <ActionButton
+                      icon={LogOut}
+                      label="Wyloguj się"
+                      onClick={handleLogout}
+                      gradient="from-red-500 to-red-600"
+                      hoverGradient="from-red-600 to-red-700"
+                    />
+                  </>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Prawa kolumna - Informacje */}
-          <div className="lg:col-span-2">
-            <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 p-6 lg:p-8 h-fit">
-              <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-6 lg:mb-8">
-                Informacje osobiste
-              </h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
-                {/* Karta - Imię i nazwisko */}
-                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
-                      <User className="w-5 h-5 text-white" />
-                    </div>
-                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Imię i nazwisko</h4>
-                  </div>
-                                     <p className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
-                     {displayName || 'Brak imienia i nazwiska'}
-                   </p>
-                </div>
-
-                {/* Karta - Email */}
-                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center">
-                      <Mail className="w-5 h-5 text-white" />
-                    </div>
-                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Email</h4>
-                  </div>
-                  <p className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
-                    {email || 'Brak adresu email'}
-                  </p>
-                </div>
-
-                {/* Karta - Klasa/Grupa */}
-                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 bg-purple-500 rounded-lg flex items-center justify-center">
-                      <GraduationCap className="w-5 h-5 text-white" />
-                    </div>
-                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Klasa/Grupa</h4>
-                  </div>
-                  <div className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
-                    {classNames.length > 0 ? (
-                      <div className="space-y-1">
-                        {classNames.map((className, index) => (
-                          <div key={index} className="bg-purple-100 text-purple-800 px-2 py-1 rounded-md text-xs font-medium">
-                            {className}
-                          </div>
-                        ))}
-                      </div>
-                    ) : userClass ? (
-                      <span>{userClass}</span>
-                    ) : (
-                      <span className="text-gray-400">Brak przypisanych klas</span>
-                    )}
-                  </div>
-                </div>
-
-
-                {/* Karta - Status konta */}
-                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center">
-                      <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Status konta</h4>
-                  </div>
-                  <p className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
-                    Aktywne
-                  </p>
-                </div>
-
-                {/* Karta - Numer telefonu */}
-                <div className="bg-white/90 backdrop-blur-xl rounded-xl p-4 lg:p-6 border border-gray-200 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-[1.02]">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                      </svg>
-                    </div>
-                    <h4 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg">Numer telefonu</h4>
-                  </div>
-                  <p className="text-gray-700 text-sm sm:text-base lg:text-lg font-medium">
-                    {phone || 'Nie podano'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Sekcja edycji profilu */}
-              <div className="mt-8">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">
-                    Edycja profilu
-                  </h3>
+          {/* Right Column - Information */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Personal Information */}
+            <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 dark:border-gray-700 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Informacje osobiste</h2>
+                {canEdit && (
                   <button
                     onClick={() => setIsEditing(!isEditing)}
-                    className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] transition-colors font-medium"
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                   >
-                    {isEditing ? 'Anuluj edycję' : 'Edytuj profil'}
-                  </button>
-                </div>
-
-                {isEditing && (
-                  <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Imię i nazwisko
-                        </label>
-                        <input
-                          type="text"
-                          value={displayName}
-                          onChange={(e) => setDisplayName(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
-                          placeholder="Wprowadź imię i nazwisko"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Email
-                        </label>
-                        <input
-                          type="email"
-                          value={email}
-                          disabled
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500"
-                          placeholder="Email (nie można zmienić)"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Klasa
-                        </label>
-                        <input
-                          type="text"
-                          value={userClass}
-                          onChange={(e) => setUserClass(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
-                          placeholder="Wprowadź klasę"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Numer telefonu <span className="text-gray-500 text-xs">(opcjonalnie)</span>
-                        </label>
-                        <input
-                          type="tel"
-                          value={phone}
-                          onChange={handlePhoneChange}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4067EC] focus:border-transparent"
-                          placeholder="+48123456789 lub 123456789"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          Numer telefonu jest używany do wysyłania powiadomień SMS o nowych wydarzeniach w kalendarzu.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Komunikat o zapisaniu */}
-                    {saveMessage && (
-                      <div className={`mt-4 p-4 rounded-lg ${
-                        saveMessage.type === 'success' 
-                          ? 'bg-green-50 border border-green-200 text-green-700' 
-                          : 'bg-red-50 border border-red-200 text-red-700'
-                      }`}>
-                        <div className="flex items-center gap-2">
-                          {saveMessage.type === 'success' ? (
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          ) : (
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          )}
-                          <span>{saveMessage.text}</span>
-                        </div>
-                      </div>
+                    {isEditing ? (
+                      <>
+                        <X className="w-4 h-4" />
+                        Anuluj
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="w-4 h-4" />
+                        Edytuj
+                      </>
                     )}
-
-                    <div className="mt-6">
-                      <button
-                        onClick={handleSaveProfile}
-                        className="bg-[#4067EC] text-white px-6 py-2 rounded-lg hover:bg-[#3050b3] transition-colors font-medium"
-                      >
-                        Zapisz zmiany
-                      </button>
-                    </div>
-                  </div>
+                  </button>
                 )}
               </div>
 
-              {/* Sekcja z 3 najwyższymi odznakami */}
-              {topBadges.length > 0 && (
-                <div className="mt-8">
-                  <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-                    <Trophy className="w-6 h-6 sm:w-7 sm:h-7 lg:w-8 lg:h-8 text-yellow-500" />
-                    Moje najwyższe odznaki
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
-                    {topBadges.map((badge) => {
-                      const currentLevelData = badge.levels[badge.currentLevel];
-                      return (
-                        <div
-                          key={badge.id}
-                          className={`relative bg-gradient-to-br ${currentLevelData.gradient} rounded-xl p-4 lg:p-6 border-2 border-white/30 hover:border-white/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl`}
-                        >
-                          {/* Poziom odznaki */}
-                          <div className="absolute top-2 right-2">
-                            <div className="px-2 py-1 rounded-full text-xs font-bold text-white bg-white/20 backdrop-blur-sm">
-                              {currentLevelData.name}
-                            </div>
-                          </div>
-
-                          {/* Ikona */}
-                          <div className="flex justify-center mb-3">
-                            <div className="text-4xl lg:text-5xl">
-                              {badge.icon}
-                            </div>
-                          </div>
-
-                          {/* Nazwa */}
-                          <h4 className="text-base lg:text-lg font-bold text-white mb-1 text-center">
-                            {badge.name}
-                          </h4>
-
-                          {/* Poziom */}
-                          <p className="text-xs lg:text-sm text-white/90 text-center">
-                            Poziom {badge.currentLevel + 1} / {badge.levels.length}
-                          </p>
-                        </div>
-                      );
-                    })}
+              {!isEditing ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <InfoCard
+                    icon={User}
+                    label="Imię i nazwisko"
+                    value={displayName || 'Brak imienia i nazwiska'}
+                    iconBg="bg-blue-500"
+                    editable={canEdit}
+                    onClick={canEdit ? () => setIsEditing(true) : undefined}
+                  />
+                  <InfoCard
+                    icon={Mail}
+                    label="Email"
+                    value={email || 'Brak adresu email'}
+                    iconBg="bg-green-500"
+                  />
+                  <InfoCard
+                    icon={GraduationCap}
+                    label="Klasa/Grupa"
+                    value={classNames.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {classNames.map((name, idx) => (
+                          <span key={idx} className="px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 rounded-md text-xs font-medium">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : userClass || 'Brak przypisanych klas'}
+                    iconBg="bg-purple-500"
+                    editable={canEdit}
+                    onClick={canEdit ? () => setIsEditing(true) : undefined}
+                  />
+                  <InfoCard
+                    icon={Phone}
+                    label="Numer telefonu"
+                    value={phone || 'Nie podano'}
+                    iconBg="bg-orange-500"
+                    editable={canEdit}
+                    onClick={canEdit ? () => setIsEditing(true) : undefined}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Imię i nazwisko
+                      </label>
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="Wprowadź imię i nazwisko"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={email}
+                        disabled
+                        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                        placeholder="Email (nie można zmienić)"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Klasa
+                      </label>
+                      <input
+                        type="text"
+                        value={userClass}
+                        onChange={(e) => setUserClass(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="Wprowadź klasę"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Numer telefonu <span className="text-gray-500 text-xs">(opcjonalnie)</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={handlePhoneChange}
+                        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="+48123456789 lub 123456789"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Numer telefonu jest używany do wysyłania powiadomień SMS o nowych wydarzeniach w kalendarzu.
+                      </p>
+                    </div>
                   </div>
-                  
-                  {/* Link do pełnych statystyk */}
-                  <div className="mt-6 text-center">
-                    <Link
-                      href="/profile/statistics"
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+
+                  {saveMessage && (
+                    <div className={`p-4 rounded-lg ${
+                      saveMessage.type === 'success' 
+                        ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' 
+                        : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        {saveMessage.type === 'success' ? (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                        <span>{saveMessage.text}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-4">
+                    <button
+                      onClick={handleSaveProfile}
+                      className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                     >
-                      <Trophy className="w-4 h-4" />
-                      <span className="font-semibold">Zobacz wszystkie odznaki</span>
-                    </Link>
+                      <Save className="w-4 h-4" />
+                      Zapisz zmiany
+                    </button>
+                    <button
+                      onClick={() => setIsEditing(false)}
+                      className="px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors font-medium"
+                    >
+                      Anuluj
+                    </button>
                   </div>
                 </div>
               )}
-              
             </div>
+
+            {/* Top Badges */}
+            {topBadges.length > 0 && (
+              <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 dark:border-gray-700 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                    <Trophy className="w-7 h-7 text-yellow-500" />
+                    Moje najwyższe odznaki
+                  </h2>
+                  <button
+                    onClick={() => setShowBadgeModal(true)}
+                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Zobacz wszystkie
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
+                  {topBadges.map((badge) => (
+                    <BadgeCard
+                      key={badge.id}
+                      {...badge}
+                      onClick={() => {
+                        setSelectedBadge(badge);
+                        setShowBadgeModal(true);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Badge Modal */}
+      <Modal
+        isOpen={showBadgeModal}
+        onClose={() => {
+          setShowBadgeModal(false);
+          setSelectedBadge(null);
+        }}
+        title={selectedBadge ? selectedBadge.name : 'Wszystkie odznaki'}
+        size="lg"
+      >
+        <div className="text-center py-8">
+          <p className="text-gray-600 dark:text-gray-400">
+            Pełna lista odznak dostępna w sekcji statystyk.
+          </p>
+          <button
+            onClick={() => {
+              setShowBadgeModal(false);
+              router.push('/profile/statistics');
+            }}
+            className="mt-4 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          >
+            Przejdź do statystyk
+          </button>
+        </div>
+      </Modal>
+
+      {/* Stats Modal */}
+      <Modal
+        isOpen={showStatsModal}
+        onClose={() => setShowStatsModal(false)}
+        title="Szczegółowe statystyki"
+        size="lg"
+      >
+        <div className="text-center py-8">
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            Szczegółowe statystyki dostępne w dedykowanej sekcji.
+          </p>
+          <button
+            onClick={() => {
+              setShowStatsModal(false);
+              router.push('/profile/statistics');
+            }}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          >
+            Przejdź do statystyk
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -832,4 +816,4 @@ export default function ProfilePage() {
       <ProfilePageContent />
     </Providers>
   );
-} 
+}

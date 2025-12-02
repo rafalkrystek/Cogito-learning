@@ -425,7 +425,7 @@ export default function ParentGrades() {
         </div>
 
         {/* Grades Grid - widok kafelkowy */}
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
           {/* Przedmioty obowiązkowe - kafelki */}
           {mandatoryCourses.map(([subject, subjectGrades]) => {
             // Oblicz frekwencję dla tego przedmiotu
@@ -433,38 +433,38 @@ export default function ParentGrades() {
             return (
               <div 
                 key={`mandatory-${subject}`} 
-                className="bg-white rounded-2xl shadow-lg border border-gray-100 hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 ease-in-out overflow-hidden"
+                className="bg-white rounded-xl shadow-md border border-gray-100 hover:shadow-lg hover:scale-[1.01] transition-all duration-300 ease-in-out overflow-hidden"
               >
-                <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-blue-600 via-blue-600 to-blue-700 rounded-t-2xl">
-                  <h2 className="text-base sm:text-lg font-bold text-white truncate">{subject}</h2>
+                <div className="px-3 py-2 bg-gradient-to-r from-blue-600 via-blue-600 to-blue-700 rounded-t-xl">
+                  <h2 className="text-sm font-bold text-white truncate">{subject}</h2>
                 </div>
-                <div className="p-4 sm:p-5">
+                <div className="p-3">
                   {/* Średnia */}
-                  <div className="mb-4">
-                    <div className="text-xs text-gray-500 mb-1.5 font-medium">Średnia</div>
-                    <div className="text-2xl sm:text-3xl font-bold text-blue-600">
+                  <div className="mb-3">
+                    <div className="text-[10px] text-gray-500 mb-1 font-medium">Średnia</div>
+                    <div className="text-xl font-bold text-blue-600">
                       {subjectGrades.length > 0 ? calculateAverage(subjectGrades) : '-'}
                     </div>
                   </div>
                   
                   {/* Oceny */}
-                  <div className="mb-4">
-                    <div className="text-xs text-gray-500 mb-2 font-medium">Oceny</div>
-                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                  <div className="mb-3">
+                    <div className="text-[10px] text-gray-500 mb-1.5 font-medium">Oceny</div>
+                    <div className="flex flex-wrap gap-1">
                       {subjectGrades.length > 0 ? (
                         subjectGrades.slice(0, 6).map((grade) => {
                           const gradeValue = grade.grade || grade.value || grade.value_grade;
                           return (
-                            <div key={grade.id} className={`px-2.5 py-1 rounded-lg text-xs font-bold shadow-sm ${getGradeColor(gradeValue)}`}>
+                            <div key={grade.id} className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-sm ${getGradeColor(gradeValue)}`}>
                               {gradeValue}
                             </div>
                           );
                         })
                       ) : (
-                        <span className="text-xs text-gray-400 italic">Brak ocen</span>
+                        <span className="text-[10px] text-gray-400 italic">Brak ocen</span>
                       )}
                       {subjectGrades.length > 6 && (
-                        <div className="px-2.5 py-1 rounded-lg text-xs font-bold bg-gray-100 text-gray-700 shadow-sm">
+                        <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-700 shadow-sm">
                           +{subjectGrades.length - 6}
                         </div>
                       )}
@@ -472,18 +472,18 @@ export default function ParentGrades() {
                   </div>
                   
                   {/* Frekwencja per przedmiot */}
-                  <div className="pt-3 border-t border-gray-100">
-                    <div className="text-xs text-gray-500 mb-1.5 font-medium">Frekwencja</div>
+                  <div className="pt-2 border-t border-gray-100">
+                    <div className="text-[10px] text-gray-500 mb-1 font-medium">Frekwencja</div>
                     <div className="flex items-center justify-between mb-1">
-                      <div className="text-base sm:text-lg font-bold text-gray-800">
+                      <div className="text-sm font-bold text-gray-800">
                         {attendance.percentage}%
                       </div>
-                      <div className={`w-2 h-2 rounded-full ${attendance.percentage >= 90 ? 'bg-green-500' : attendance.percentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+                      <div className={`w-1.5 h-1.5 rounded-full ${attendance.percentage >= 90 ? 'bg-green-500' : attendance.percentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-[10px] text-gray-500">
                       {attendance.present}/{attendance.total} obecności
                     </div>
-                    <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                    <div className="mt-1.5 w-full bg-gray-200 rounded-full h-1 overflow-hidden">
                       <div 
                         className={`h-full rounded-full transition-all duration-500 ${
                           attendance.percentage >= 90 ? 'bg-green-500' : 
@@ -506,38 +506,38 @@ export default function ParentGrades() {
             return (
               <div 
                 key={`elective-${subject}`} 
-                className="bg-white rounded-2xl shadow-lg border border-gray-100 hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 ease-in-out overflow-hidden"
+                className="bg-white rounded-xl shadow-md border border-gray-100 hover:shadow-lg hover:scale-[1.01] transition-all duration-300 ease-in-out overflow-hidden"
               >
-                <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-green-600 via-green-600 to-green-700 rounded-t-2xl">
-                  <h2 className="text-base sm:text-lg font-bold text-white truncate">{subject}</h2>
+                <div className="px-3 py-2 bg-gradient-to-r from-green-600 via-green-600 to-green-700 rounded-t-xl">
+                  <h2 className="text-sm font-bold text-white truncate">{subject}</h2>
                 </div>
-                <div className="p-4 sm:p-5">
+                <div className="p-3">
                   {/* Średnia */}
-                  <div className="mb-4">
-                    <div className="text-xs text-gray-500 mb-1.5 font-medium">Średnia</div>
-                    <div className="text-2xl sm:text-3xl font-bold text-green-600">
+                  <div className="mb-3">
+                    <div className="text-[10px] text-gray-500 mb-1 font-medium">Średnia</div>
+                    <div className="text-xl font-bold text-green-600">
                       {subjectGrades.length > 0 ? calculateAverage(subjectGrades) : '-'}
                     </div>
                   </div>
                   
                   {/* Oceny */}
-                  <div className="mb-4">
-                    <div className="text-xs text-gray-500 mb-2 font-medium">Oceny</div>
-                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                  <div className="mb-3">
+                    <div className="text-[10px] text-gray-500 mb-1.5 font-medium">Oceny</div>
+                    <div className="flex flex-wrap gap-1">
                       {subjectGrades.length > 0 ? (
                         subjectGrades.slice(0, 6).map((grade) => {
                           const gradeValue = grade.grade || grade.value || grade.value_grade;
                           return (
-                            <div key={grade.id} className={`px-2.5 py-1 rounded-lg text-xs font-bold shadow-sm ${getGradeColor(gradeValue)}`}>
+                            <div key={grade.id} className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-sm ${getGradeColor(gradeValue)}`}>
                               {gradeValue}
                             </div>
                           );
                         })
                       ) : (
-                        <span className="text-xs text-gray-400 italic">Brak ocen</span>
+                        <span className="text-[10px] text-gray-400 italic">Brak ocen</span>
                       )}
                       {subjectGrades.length > 6 && (
-                        <div className="px-2.5 py-1 rounded-lg text-xs font-bold bg-gray-100 text-gray-700 shadow-sm">
+                        <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-700 shadow-sm">
                           +{subjectGrades.length - 6}
                         </div>
                       )}
@@ -545,18 +545,18 @@ export default function ParentGrades() {
                   </div>
                   
                   {/* Frekwencja per przedmiot */}
-                  <div className="pt-3 border-t border-gray-100">
-                    <div className="text-xs text-gray-500 mb-1.5 font-medium">Frekwencja</div>
+                  <div className="pt-2 border-t border-gray-100">
+                    <div className="text-[10px] text-gray-500 mb-1 font-medium">Frekwencja</div>
                     <div className="flex items-center justify-between mb-1">
-                      <div className="text-base sm:text-lg font-bold text-gray-800">
+                      <div className="text-sm font-bold text-gray-800">
                         {attendance.percentage}%
                       </div>
-                      <div className={`w-2 h-2 rounded-full ${attendance.percentage >= 90 ? 'bg-green-500' : attendance.percentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+                      <div className={`w-1.5 h-1.5 rounded-full ${attendance.percentage >= 90 ? 'bg-green-500' : attendance.percentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-[10px] text-gray-500">
                       {attendance.present}/{attendance.total} obecności
                     </div>
-                    <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                    <div className="mt-1.5 w-full bg-gray-200 rounded-full h-1 overflow-hidden">
                       <div 
                         className={`h-full rounded-full transition-all duration-500 ${
                           attendance.percentage >= 90 ? 'bg-green-500' : 

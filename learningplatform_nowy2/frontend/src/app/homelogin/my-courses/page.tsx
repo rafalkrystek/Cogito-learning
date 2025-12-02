@@ -22,6 +22,7 @@ interface Course {
   firebase_id?: string;
   thumbnail?: string;
   category_name?: string;
+  iconUrl?: string;
 }
 
 function MyCoursesPageContent() {
@@ -349,15 +350,29 @@ function MyCoursesPageContent() {
                 {viewMode === 'grid' ? (
                   // Widok kafelków
                   <div className="h-full flex flex-col">
-                    <div className="relative h-40 sm:h-48 lg:h-56 bg-gray-100 overflow-hidden">
-                      <Image 
-                        src={course.thumbnail || "/thumb.png"} 
-                        alt={course.title || 'Course thumbnail'} 
-                        fill
-                        className="object-cover transition-transform duration-300 ease-in-out group-hover:scale-110"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                      <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <div className="relative h-40 sm:h-48 lg:h-56 bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                      {course.iconUrl ? (
+                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900 p-8">
+                          <Image 
+                            src={course.iconUrl} 
+                            alt={course.title || 'Course icon'} 
+                            width={120}
+                            height={120}
+                            className="object-contain transition-transform duration-300 ease-in-out group-hover:scale-110"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <Image 
+                            src={course.thumbnail || "/thumb.png"} 
+                            alt={course.title || 'Course thumbnail'} 
+                            fill
+                            className="object-cover transition-transform duration-300 ease-in-out group-hover:scale-110"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                        </>
+                      )}
+                      <div className="absolute top-3 right-3 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                         <BookOpen className="w-4 h-4 text-[#4067EC]" />
                       </div>
                     </div>

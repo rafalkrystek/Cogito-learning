@@ -5,6 +5,8 @@ import { db } from '../../../../config/firebase';
 import Link from "next/link";
 import { useAuth } from '@/context/AuthContext';
 import { BookOpen, FileText, Edit, Trash2, Plus } from 'lucide-react';
+import CourseIconPicker from '@/components/CourseIconPicker';
+import Image from 'next/image';
 
 interface Course {
   id: string;
@@ -17,6 +19,7 @@ interface Course {
   updated_at?: string;
   pdfUrls: string[];
   links: string[];
+  iconUrl?: string;
   slug: string;
   created_by?: string;
   teacherEmail?: string;
@@ -56,7 +59,8 @@ export default function TeacherCourses() {
     year_of_study: 1,
     instructor_name: '',
     category_name: '',
-    courseType: 'obowiązkowy' as 'obowiązkowy' | 'fakultatywny'
+    courseType: 'obowiązkowy' as 'obowiązkowy' | 'fakultatywny',
+    iconUrl: ''
   });
   const [creatingCourse, setCreatingCourse] = useState(false);
   
@@ -220,7 +224,8 @@ export default function TeacherCourses() {
             teacherEmail: data.teacherEmail || '',
             assignedUsers: data.assignedUsers || [],
             sections: data.sections || [],
-            courseType: data.courseType || 'obowiązkowy'
+            courseType: data.courseType || 'obowiązkowy',
+            iconUrl: data.iconUrl || ''
           });
         });
       });
@@ -435,6 +440,7 @@ export default function TeacherCourses() {
         instructor_name: newCourse.instructor_name.trim(),
         category_name: newCourse.category_name.trim(),
         courseType: newCourse.courseType,
+        iconUrl: newCourse.iconUrl || '',
         created_by: user.email,
         assignedUsers: [],
         sections: [],
@@ -465,7 +471,8 @@ export default function TeacherCourses() {
         year_of_study: 1,
         instructor_name: '',
         category_name: '',
-        courseType: 'obowiązkowy'
+        courseType: 'obowiązkowy',
+        iconUrl: ''
       });
       
       // Refresh courses list
@@ -566,6 +573,7 @@ export default function TeacherCourses() {
         instructor_name: sourceCourseData.instructor_name || '',
         category_name: sourceCourseData.category_name || '',
         courseType: sourceCourseData.courseType || 'obowiązkowy',
+        iconUrl: sourceCourseData.iconUrl || '',
         created_by: user.email,
         assignedUsers: [], // Nowy kurs nie ma przypisanych użytkowników - MUSI być przypisany ponownie
         assignedClasses: sourceCourseData.assignedClasses ? [...sourceCourseData.assignedClasses] : [], // Kopiuj klasy
@@ -817,8 +825,18 @@ export default function TeacherCourses() {
                   <div key={`${course.id}-${course.updated_at || course.created_at}`} className="bg-white/90 backdrop-blur-sm rounded-2xl border border-white/30 p-4 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 transform hover:-translate-y-1 group h-80 flex flex-col">
                     {/* Course Header */}
                     <div className="flex items-center justify-between mb-4">
-                      <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
-                        <BookOpen className="h-6 w-6 text-white" />
+                      <div className={`w-12 h-12 ${course.iconUrl ? 'bg-transparent' : 'bg-blue-500'} rounded-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300 overflow-hidden`}>
+                        {course.iconUrl ? (
+                          <Image
+                            src={course.iconUrl}
+                            alt={course.title || 'Course icon'}
+                            width={48}
+                            height={48}
+                            className="w-full h-full object-contain p-1"
+                          />
+                        ) : (
+                          <BookOpen className="h-6 w-6 text-white" />
+                        )}
                       </div>
                       <div className="flex gap-1">
                         {canDeleteCourse(course) && (
@@ -1059,6 +1077,14 @@ export default function TeacherCourses() {
                       : 'Kurs fakultatywny - uczniowie mogą go wybrać opcjonalnie'
                     }
                   </p>
+                </div>
+
+                <div>
+                  <CourseIconPicker
+                    selectedIconUrl={newCourse.iconUrl}
+                    onIconSelect={(iconUrl) => setNewCourse(prev => ({ ...prev, iconUrl }))}
+                    label="Ikona kursu (opcjonalnie)"
+                  />
                 </div>
                 
                 <div className="pt-4 border-t border-gray-200">

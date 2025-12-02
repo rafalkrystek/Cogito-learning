@@ -6,6 +6,7 @@ import VideoPlayer from './VideoPlayer';
 import YouTubePlayer from './YouTubePlayer';
 import MathView from './MathView';
 import ThemeToggle from './ThemeToggle';
+import Image from 'next/image';
 import { db } from '../config/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
@@ -222,8 +223,19 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                 </div>
               )}
             </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6">
-              <div className="text-6xl mb-2">🎓</div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 flex items-center justify-center">
+              {course?.iconUrl ? (
+                <div className="w-24 h-24 relative">
+                  <Image
+                    src={course.iconUrl}
+                    alt={course.title || 'Course icon'}
+                    fill
+                    className="object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="text-6xl mb-2">🎓</div>
+              )}
             </div>
           </div>
           
