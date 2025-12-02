@@ -881,10 +881,10 @@ export default function ClassesPage() {
           <div className="flex items-center justify-between">
             <button
               onClick={() => window.location.href = '/homelogin/teacher'}
-              className="flex items-center gap-3 px-5 py-3 bg-white/70 backdrop-blur-sm text-gray-700 rounded-xl hover:bg-white hover:shadow-lg transition-all duration-300 ease-in-out border border-white/30 hover:border-blue-200 group"
+              className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
-              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-              <span className="font-medium">Powrót do dashboard</span>
+              <ArrowLeft className="w-5 h-5" />
+              Powrót
             </button>
 
             <div className="text-center">

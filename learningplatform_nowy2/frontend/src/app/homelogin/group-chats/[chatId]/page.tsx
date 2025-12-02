@@ -136,10 +136,10 @@ export default function StudentGroupChatView() {
         <p className="text-gray-500 mb-4">Nie znaleziono czatu lub nie masz do niego dostępu.</p>
         <button 
           onClick={() => window.location.href = '/homelogin'}
-          className="flex items-center gap-2 px-4 py-2 bg-white/60 backdrop-blur-sm text-gray-700 rounded-lg hover:bg-white hover:shadow-lg transition-all duration-200 ease-in-out border border-white/20"
+          className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Powrót do strony głównej
+          <ArrowLeft className="w-5 h-5" />
+          Powrót
         </button>
       </div>
     );

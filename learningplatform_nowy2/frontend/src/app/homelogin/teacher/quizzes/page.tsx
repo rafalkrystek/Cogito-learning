@@ -611,10 +611,10 @@ export default function QuizManagementPage() {
               <div className="flex items-center space-x-4">
                 <button
                   onClick={handleBackClick}
-                  className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all duration-300"
+                  className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
                 >
                   <ArrowLeft className="w-5 h-5" />
-                  <span>Powrót do strony głównej</span>
+                  Powrót
                 </button>
                 <div>
                   <h1 className="text-3xl font-bold text-gray-900 mb-2">

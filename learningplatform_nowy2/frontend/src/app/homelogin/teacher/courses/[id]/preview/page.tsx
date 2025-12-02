@@ -6,6 +6,7 @@ import { doc, getDoc, collection, query, where, getDocs } from "firebase/firesto
 import { db } from "@/config/firebase";
 import Providers from '@/components/Providers';
 import { CourseViewShared } from "@/components/CourseViewShared";
+import { ArrowLeft } from 'lucide-react';
 
 function TeacherCoursePreviewContent() {
   const { user, loading: authLoading } = useAuth();
@@ -90,9 +91,10 @@ function TeacherCoursePreviewContent() {
           <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={() => window.history.back()}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
-            ← Powrót
+            <ArrowLeft className="w-5 h-5" />
+            Powrót
           </button>
         </div>
       </div>

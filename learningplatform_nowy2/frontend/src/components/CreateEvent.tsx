@@ -1,7 +1,8 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, getDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, getDoc, doc, query, where } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { useAuth } from '../context/AuthContext';
 
 interface Student {
   uid: string;
@@ -11,7 +12,17 @@ interface Student {
   phone?: string;
 }
 
+interface Class {
+  id: string;
+  name: string;
+  description?: string;
+  students: string[];
+  teacher_id: string;
+  is_active: boolean;
+}
+
 const CreateEvent: React.FC = () => {
+  const { user } = useAuth();
   const [isExpanded, setIsExpanded] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -25,6 +36,33 @@ const CreateEvent: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [timeError, setTimeError] = useState('');
+  const [availableClasses, setAvailableClasses] = useState<Class[]>([]);
+  const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
+
+  // Pobierz klasy nauczyciela
+  useEffect(() => {
+    const fetchClasses = async () => {
+      if (!user || !user.uid) return;
+      
+      try {
+        const classesQuery = query(
+          collection(db, 'classes'),
+          where('teacher_id', '==', user.uid)
+        );
+        const classesSnapshot = await getDocs(classesQuery);
+        const classesData = classesSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Class))
+          .filter(cls => cls.is_active);
+        setAvailableClasses(classesData);
+      } catch (error) {
+        console.error('Error fetching classes:', error);
+      }
+    };
+    
+    if (user?.role === 'teacher') {
+      fetchClasses();
+    }
+  }, [user]);
 
   useEffect(() => {
     const fetchStudents = async () => {
@@ -69,6 +107,41 @@ const CreateEvent: React.FC = () => {
     );
   };
 
+  const toggleClass = (classId: string) => {
+    setSelectedClasses(prev => {
+      const isSelected = prev.includes(classId);
+      const newSelectedClasses = isSelected
+        ? prev.filter(id => id !== classId)
+        : [...prev, classId];
+      
+      // Zaktualizuj wybranych uczniów na podstawie wybranych klas
+      const classStudents = new Set<string>();
+      
+      // Dodaj uczniów z wybranych klas
+      newSelectedClasses.forEach(cId => {
+        const classData = availableClasses.find(c => c.id === cId);
+        if (classData && classData.students) {
+          classData.students.forEach(studentId => classStudents.add(studentId));
+        }
+      });
+      
+      // Dodaj uczniów z indywidualnie wybranych uczniów (których nie ma w klasach)
+      selectedStudents.forEach(studentId => {
+        // Sprawdź czy uczeń nie jest już w wybranej klasie
+        const isInSelectedClass = newSelectedClasses.some(cId => {
+          const classData = availableClasses.find(c => c.id === cId);
+          return classData?.students?.includes(studentId);
+        });
+        if (!isInSelectedClass) {
+          classStudents.add(studentId);
+        }
+      });
+      
+      setSelectedStudents(Array.from(classStudents));
+      return newSelectedClasses;
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -86,14 +159,29 @@ const CreateEvent: React.FC = () => {
       console.log('📝 Tytuł:', title);
       console.log('📅 Data:', date);
       console.log('⏰ Godzina:', `${startTime} - ${endTime}`);
+      console.log('👥 Wybrane klasy (ID):', selectedClasses);
       console.log('👥 Wybrani uczniowie (ID):', selectedStudents);
       console.log('👥 Liczba wybranych uczniów:', selectedStudents.length);
       
-      if (selectedStudents.length === 0) {
-        setError('Musisz wybrać przynajmniej jednego ucznia!');
+      // Zbierz wszystkich uczniów z wybranych klas
+      const studentsFromClasses = new Set<string>();
+      selectedClasses.forEach(classId => {
+        const classData = availableClasses.find(c => c.id === classId);
+        if (classData && classData.students) {
+          classData.students.forEach(studentId => studentsFromClasses.add(studentId));
+        }
+      });
+      
+      // Połącz uczniów z klas z indywidualnie wybranymi
+      const allSelectedStudents = Array.from(new Set([...Array.from(studentsFromClasses), ...selectedStudents]));
+      
+      if (allSelectedStudents.length === 0) {
+        setError('Musisz wybrać przynajmniej jednego ucznia lub klasę!');
         setLoading(false);
         return;
       }
+      
+      console.log('👥 Wszyscy wybrani uczniowie (z klas + indywidualnie):', allSelectedStudents);
 
       // Utwórz wydarzenie
       console.log('💾 Zapisuję wydarzenie do bazy danych...');
@@ -104,14 +192,14 @@ const CreateEvent: React.FC = () => {
         startTime,
         endTime,
         createdBy: 'teacher',
-        assignedTo: selectedStudents,
+        assignedTo: allSelectedStudents,
       });
 
       console.log('✅ Wydarzenie utworzone z ID:', eventRef.id);
 
       // Pobierz dane uczniów (email i telefon) do wysyłki powiadomień
       console.log('📥 Pobieram dane uczniów z bazy danych...');
-      const studentDataPromises = selectedStudents.map(async (studentId) => {
+      const studentDataPromises = allSelectedStudents.map(async (studentId) => {
         try {
           console.log(`  🔍 Pobieram dane dla ucznia ID: ${studentId}`);
           const studentDoc = await getDoc(doc(db, 'users', studentId));
@@ -153,7 +241,7 @@ const CreateEvent: React.FC = () => {
       console.log(`📊 Statystyki: ${studentsWithEmail} z emailem, ${studentsWithPhoneCount} z numerem telefonu`);
 
       // Utwórz powiadomienia dla każdego przypisanego ucznia
-      const notificationPromises = selectedStudents.map(studentId => {
+      const notificationPromises = allSelectedStudents.map(studentId => {
         console.log('Creating notification for student:', studentId);
         return addDoc(collection(db, 'notifications'), {
           user_id: studentId,
@@ -344,6 +432,7 @@ Platforma E-Learning
       setStartTime('');
       setEndTime('');
       setSelectedStudents([]);
+      setSelectedClasses([]);
     } catch (error) {
       console.error('Error creating event:', error);
       setError('Błąd podczas tworzenia wydarzenia: ' + (error as Error).message);
@@ -472,9 +561,52 @@ Platforma E-Learning
           />
         </div>
 
+        {/* Wybór klas */}
+        {availableClasses.length > 0 && (
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Wybierz klasy (opcjonalnie)</label>
+            <div className="max-h-48 overflow-y-auto border-2 border-gray-200 rounded-xl p-4 bg-gray-50 mb-4">
+              {availableClasses.length > 0 ? (
+                <div className="space-y-3">
+                  {availableClasses.map(classItem => (
+                    <label key={classItem.id} className="flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200 hover:border-[#4067EC] hover:bg-[#F1F4FE] transition-all cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedClasses.includes(classItem.id)}
+                        onChange={() => toggleClass(classItem.id)}
+                        className="w-4 h-4 text-[#4067EC] border-gray-300 rounded focus:ring-[#4067EC] focus:ring-2"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{classItem.name || 'Brak nazwy'}</div>
+                        <div className="text-sm text-gray-500">
+                          {classItem.students?.length || 0} {classItem.students?.length === 1 ? 'uczeń' : 'uczniów'}
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {selectedClasses.includes(classItem.id) ? '✓ Zaznaczona' : '○ Niezaznaczona'}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center text-gray-500 py-4">
+                  Brak dostępnych klas
+                </div>
+              )}
+            </div>
+            {selectedClasses.length > 0 && (
+              <div className="mb-4 text-sm text-gray-600">
+                Wybrane klasy: <span className="font-semibold text-[#4067EC]">{selectedClasses.length}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Wybór uczniów */}
         <div className="md:col-span-2">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Wybierz uczniów *</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Wybierz uczniów {selectedClasses.length > 0 ? '(dodatkowo do klas)' : '*'}
+          </label>
           
           {/* Wyszukiwarka uczniów */}
           <div className="mb-4">
@@ -559,6 +691,11 @@ Platforma E-Learning
           {filteredStudents.length > 0 && (
             <div className="mt-3 text-sm text-gray-600">
               Zaznaczono: <span className="font-semibold text-[#4067EC]">{selectedStudents.length}</span> z <span className="font-semibold">{filteredStudents.length}</span> uczniów
+              {selectedClasses.length > 0 && (
+                <span className="ml-2 text-gray-500">
+                  (+ uczniowie z {selectedClasses.length} {selectedClasses.length === 1 ? 'klasy' : 'klas'})
+                </span>
+              )}
             </div>
           )}
         </div>

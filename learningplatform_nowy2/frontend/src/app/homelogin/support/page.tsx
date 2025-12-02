@@ -194,11 +194,10 @@ export default function FAQPage() {
           <div className="flex items-center justify-between">
             <button
               onClick={() => router.push('/homelogin')}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 hover:shadow-md transition-all duration-200 ease-in-out border border-gray-200 dark:border-gray-600"
+              className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Powrót do strony głównej</span>
-              <span className="sm:hidden">Powrót</span>
+              <ArrowLeft className="w-5 h-5" />
+              Powrót
             </button>
             
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">

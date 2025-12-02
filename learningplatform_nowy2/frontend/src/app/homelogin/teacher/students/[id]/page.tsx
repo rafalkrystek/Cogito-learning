@@ -481,10 +481,10 @@ export default function StudentProfilePage() {
         <div className="text-red-600 mb-4">{error || 'Nie udało się załadować profilu ucznia'}</div>
         <button 
           onClick={() => window.location.href = '/homelogin'}
-          className="flex items-center gap-2 px-4 py-2 bg-white/60 backdrop-blur-sm text-gray-700 rounded-lg hover:bg-white hover:shadow-lg transition-all duration-200 ease-in-out border border-white/20"
+          className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Powrót do strony głównej
+          <ArrowLeft className="w-5 h-5" />
+          Powrót
         </button>
       </div>
     );
@@ -497,11 +497,10 @@ export default function StudentProfilePage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
-            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all duration-200"
+            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Powrót do strony głównej</span>
-            <span className="sm:hidden">Powrót</span>
+            <ArrowLeft className="w-5 h-5" />
+            Powrót
           </button>
 
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">

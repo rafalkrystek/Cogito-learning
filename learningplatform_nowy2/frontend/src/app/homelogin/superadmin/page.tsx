@@ -137,6 +137,8 @@ function SuperAdminDashboardContent() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<string>('all');
+  const [userStatusFilter, setUserStatusFilter] = useState<string>('all');
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -1288,8 +1290,32 @@ function SuperAdminDashboardContent() {
                     </div>
                   </div>
                   
-                  {/* Wyszukiwarka */}
-                  <div className="mb-6">
+                  {/* Licznik wyników */}
+                  {(() => {
+                    const filteredCount = users.filter(user => {
+                      if (searchTerm) {
+                        const search = searchTerm.toLowerCase();
+                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+                        const email = (user.email || '').toLowerCase();
+                        if (!fullName.includes(search) && !email.includes(search)) return false;
+                      }
+                      if (userRoleFilter !== 'all' && user.role !== userRoleFilter) return false;
+                      if (userStatusFilter !== 'all') {
+                        if (userStatusFilter === 'approved' && !user.approved) return false;
+                        if (userStatusFilter === 'pending' && user.approved) return false;
+                      }
+                      return true;
+                    }).length;
+                    return (
+                      <div className="mb-4 text-sm text-gray-600 dark:text-white/70">
+                        Wyświetlono <span className="font-semibold text-blue-600 dark:text-blue-400">{filteredCount}</span> z <span className="font-semibold">{users.length}</span> użytkowników
+                      </div>
+                    );
+                  })()}
+
+                  {/* Wyszukiwarka i Filtry */}
+                  <div className="mb-6 space-y-4">
+                    {/* Wyszukiwarka */}
                     <div className="relative">
                       <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-white/50" />
                       <input
@@ -1307,6 +1333,45 @@ function SuperAdminDashboardContent() {
                           <X className="w-5 h-5" />
                         </button>
                       )}
+                    </div>
+
+                    {/* Filtry */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Filtr po roli */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          <Filter className="w-4 h-4 inline mr-1" />
+                          Rola
+                        </label>
+                        <select
+                          value={userRoleFilter}
+                          onChange={(e) => setUserRoleFilter(e.target.value)}
+                          className="w-full px-4 py-3 bg-gray-50 dark:bg-white/10 backdrop-blur-sm border border-gray-300 dark:border-white/20 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                        >
+                          <option value="all">Wszystkie role</option>
+                          <option value="admin">👑 Admin</option>
+                          <option value="teacher">👨‍🏫 Nauczyciel</option>
+                          <option value="parent">👨‍👩‍👧 Rodzic</option>
+                          <option value="student">🎓 Uczeń</option>
+                        </select>
+                      </div>
+
+                      {/* Filtr po statusie */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          <Filter className="w-4 h-4 inline mr-1" />
+                          Status
+                        </label>
+                        <select
+                          value={userStatusFilter}
+                          onChange={(e) => setUserStatusFilter(e.target.value)}
+                          className="w-full px-4 py-3 bg-gray-50 dark:bg-white/10 backdrop-blur-sm border border-gray-300 dark:border-white/20 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200"
+                        >
+                          <option value="all">Wszystkie statusy</option>
+                          <option value="approved">✅ Zatwierdzony</option>
+                          <option value="pending">⏳ Oczekuje</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
 
@@ -1330,11 +1395,32 @@ function SuperAdminDashboardContent() {
                   <div className="space-y-3">
                     {users
                       .filter(user => {
-                        if (!searchTerm) return true;
-                        const search = searchTerm.toLowerCase();
-                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
-                        const email = (user.email || '').toLowerCase();
-                        return fullName.includes(search) || email.includes(search);
+                        // Filtr po wyszukiwarce (nazwa/email)
+                        if (searchTerm) {
+                          const search = searchTerm.toLowerCase();
+                          const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+                          const email = (user.email || '').toLowerCase();
+                          if (!fullName.includes(search) && !email.includes(search)) {
+                            return false;
+                          }
+                        }
+
+                        // Filtr po roli
+                        if (userRoleFilter !== 'all' && user.role !== userRoleFilter) {
+                          return false;
+                        }
+
+                        // Filtr po statusie
+                        if (userStatusFilter !== 'all') {
+                          if (userStatusFilter === 'approved' && !user.approved) {
+                            return false;
+                          }
+                          if (userStatusFilter === 'pending' && user.approved) {
+                            return false;
+                          }
+                        }
+
+                        return true;
                       })
                       .map((user) => {
                         const roleColors: { [key: string]: string } = {
@@ -1490,16 +1576,37 @@ function SuperAdminDashboardContent() {
                         );
                       })}
                     {users.filter(user => {
-                      if (!searchTerm) return true;
-                      const search = searchTerm.toLowerCase();
-                      const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
-                      const email = (user.email || '').toLowerCase();
-                      return fullName.includes(search) || email.includes(search);
+                      // Filtr po wyszukiwarce (nazwa/email)
+                      if (searchTerm) {
+                        const search = searchTerm.toLowerCase();
+                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+                        const email = (user.email || '').toLowerCase();
+                        if (!fullName.includes(search) && !email.includes(search)) {
+                          return false;
+                        }
+                      }
+
+                      // Filtr po roli
+                      if (userRoleFilter !== 'all' && user.role !== userRoleFilter) {
+                        return false;
+                      }
+
+                      // Filtr po statusie
+                      if (userStatusFilter !== 'all') {
+                        if (userStatusFilter === 'approved' && !user.approved) {
+                          return false;
+                        }
+                        if (userStatusFilter === 'pending' && user.approved) {
+                          return false;
+                        }
+                      }
+
+                      return true;
                     }).length === 0 && (
                       <div className="text-center py-12 text-gray-500 dark:text-white/50">
                         <p className="text-lg">Brak użytkowników do wyświetlenia</p>
-                        {searchTerm && (
-                          <p className="text-sm mt-2">Spróbuj zmienić kryteria wyszukiwania</p>
+                        {(searchTerm || userRoleFilter !== 'all' || userStatusFilter !== 'all') && (
+                          <p className="text-sm mt-2">Spróbuj zmienić kryteria wyszukiwania lub filtry</p>
                         )}
                       </div>
                     )}

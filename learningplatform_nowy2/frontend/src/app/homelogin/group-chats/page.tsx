@@ -463,10 +463,10 @@ export default function StudentGroupChatsPage() {
             <div className="flex items-center gap-4">
               <button
                 onClick={() => router.push('/homelogin')}
-                className="flex items-center gap-2 px-4 py-2 bg-white/60 backdrop-blur-sm text-gray-700 rounded-lg hover:bg-white hover:shadow-lg transition-all duration-200 ease-in-out border border-white/20"
+                className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Powrót do strony głównej
+                <ArrowLeft className="w-5 h-5" />
+                Powrót
               </button>
               <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
                 <MessageSquare className="h-6 w-6 text-white" />

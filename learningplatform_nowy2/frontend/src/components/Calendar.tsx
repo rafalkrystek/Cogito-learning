@@ -4,7 +4,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid/index.js';
 import timeGridPlugin from '@fullcalendar/timegrid/index.js';
 import interactionPlugin from '@fullcalendar/interaction/index.js';
-import { collection, getDocs, doc, updateDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, addDoc, query, where } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -122,6 +122,25 @@ const Calendar: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Pobierz klasy nauczyciela
+    const fetchClasses = async () => {
+      if (!user || !user.uid) return;
+      
+      try {
+        const classesQuery = query(
+          collection(db, 'classes'),
+          where('teacher_id', '==', user.uid)
+        );
+        const classesSnapshot = await getDocs(classesQuery);
+        const classesData = classesSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as any))
+          .filter(cls => cls.is_active);
+        setAvailableClasses(classesData);
+      } catch (error) {
+        console.error('Error fetching classes:', error);
+      }
+    };
+    
     // Pobierz uczniów do wyboru w edycji
     const fetchStudents = async () => {
       const usersCollection = collection(db, 'users');
@@ -131,7 +150,10 @@ const Calendar: React.FC = () => {
         .filter(user => user && user.role === 'student');
       setStudents(studentsList);
     };
-    if (user?.role === 'teacher') fetchStudents();
+    if (user?.role === 'teacher') {
+      fetchClasses();
+      fetchStudents();
+    }
   }, [user]);
 
   // Filtrowanie wydarzeń dla użytkownika
@@ -550,6 +572,43 @@ const Calendar: React.FC = () => {
   const [quickDescription, setQuickDescription] = useState('');
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickSelectedStudents, setQuickSelectedStudents] = useState<string[]>([]);
+  const [availableClasses, setAvailableClasses] = useState<{id: string, name: string, students: string[]}[]>([]);
+  const [quickSelectedClasses, setQuickSelectedClasses] = useState<string[]>([]);
+
+  const toggleQuickClass = (classId: string) => {
+    setQuickSelectedClasses(prev => {
+      const isSelected = prev.includes(classId);
+      const newSelectedClasses = isSelected
+        ? prev.filter(id => id !== classId)
+        : [...prev, classId];
+      
+      // Zaktualizuj wybranych uczniów na podstawie wybranych klas
+      const classStudents = new Set<string>();
+      
+      // Dodaj uczniów z wybranych klas
+      newSelectedClasses.forEach(cId => {
+        const classData = availableClasses.find(c => c.id === cId);
+        if (classData && classData.students) {
+          classData.students.forEach(studentId => classStudents.add(studentId));
+        }
+      });
+      
+      // Dodaj uczniów z indywidualnie wybranych uczniów (których nie ma w klasach)
+      quickSelectedStudents.forEach(studentId => {
+        // Sprawdź czy uczeń nie jest już w wybranej klasie
+        const isInSelectedClass = newSelectedClasses.some(cId => {
+          const classData = availableClasses.find(c => c.id === cId);
+          return classData?.students?.includes(studentId);
+        });
+        if (!isInSelectedClass) {
+          classStudents.add(studentId);
+        }
+      });
+      
+      setQuickSelectedStudents(Array.from(classStudents));
+      return newSelectedClasses;
+    });
+  };
 
   // Obsługa szybkiego tworzenia wydarzenia
   const handleQuickEventSubmit = async () => {
@@ -564,8 +623,23 @@ const Calendar: React.FC = () => {
       console.log('📝 Tytuł:', quickTitle);
       console.log('📅 Data:', quickEventDate);
       console.log('⏰ Godzina:', `${quickStartTime} - ${quickEndTime}`);
+      console.log('👥 Wybrane klasy (ID):', quickSelectedClasses);
       console.log('👥 Wybrani uczniowie (ID):', quickSelectedStudents);
-      console.log('👥 Liczba wybranych uczniów:', quickSelectedStudents.length);
+      
+      // Zbierz wszystkich uczniów z wybranych klas
+      const studentsFromClasses = new Set<string>();
+      quickSelectedClasses.forEach(classId => {
+        const classData = availableClasses.find(c => c.id === classId);
+        if (classData && classData.students) {
+          classData.students.forEach(studentId => studentsFromClasses.add(studentId));
+        }
+      });
+      
+      // Połącz uczniów z klas z indywidualnie wybranymi
+      const allSelectedStudents = Array.from(new Set([...Array.from(studentsFromClasses), ...quickSelectedStudents]));
+      
+      console.log('👥 Wszyscy wybrani uczniowie (z klas + indywidualnie):', allSelectedStudents);
+      console.log('👥 Liczba wybranych uczniów:', allSelectedStudents.length);
       
       const eventRef = await addDoc(collection(db, 'events'), {
         title: quickTitle,
@@ -574,15 +648,15 @@ const Calendar: React.FC = () => {
         startTime: quickStartTime,
         endTime: quickEndTime,
         createdBy: user?.uid || user?.email || 'teacher',
-        assignedTo: quickSelectedStudents.length > 0 ? quickSelectedStudents : [],
-        students: quickSelectedStudents.length > 0 ? quickSelectedStudents : [],
+        assignedTo: allSelectedStudents.length > 0 ? allSelectedStudents : [],
+        students: allSelectedStudents.length > 0 ? allSelectedStudents : [],
       });
       
       console.log('✅ Wydarzenie utworzone z ID:', eventRef.id);
       
       // Utwórz powiadomienia dla wybranych uczniów
-      if (quickSelectedStudents.length > 0) {
-        const notificationPromises = quickSelectedStudents.map(studentId => {
+      if (allSelectedStudents.length > 0) {
+        const notificationPromises = allSelectedStudents.map(studentId => {
           return addDoc(collection(db, 'notifications'), {
             user_id: studentId,
             type: 'event',
@@ -615,6 +689,7 @@ const Calendar: React.FC = () => {
       setQuickEndTime('');
       setQuickEventDate('');
       setQuickSelectedStudents([]);
+      setQuickSelectedClasses([]);
       
       // Cloud Function automatycznie wyśle SMS i email
       alert(`Wydarzenie utworzone! Powiadomienia SMS i email zostaną wysłane automatycznie przez Firebase Cloud Functions.`);
@@ -734,11 +809,40 @@ const Calendar: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Wybór klas */}
+                {availableClasses.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                      Klasy (opcjonalnie)
+                    </label>
+                    <div className="max-h-32 overflow-y-auto border-2 border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-800 mb-3">
+                      {availableClasses.map(classItem => (
+                        <label key={classItem.id} className="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={quickSelectedClasses.includes(classItem.id)}
+                            onChange={() => toggleQuickClass(classItem.id)}
+                            className="w-4 h-4 text-[#4067EC] dark:text-blue-400 border-gray-300 dark:border-gray-600 rounded focus:ring-[#4067EC] dark:focus:ring-blue-400"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">
+                            {classItem.name || 'Brak nazwy'} ({classItem.students?.length || 0} {classItem.students?.length === 1 ? 'uczeń' : 'uczniów'})
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    {quickSelectedClasses.length > 0 && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        Wybrane klasy: {quickSelectedClasses.length}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Wybór uczniów */}
                 {students.length > 0 && (
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                      Uczniowie (opcjonalnie)
+                      Uczniowie {quickSelectedClasses.length > 0 ? '(dodatkowo do klas)' : '(opcjonalnie)'}
                     </label>
                     <div className="max-h-32 overflow-y-auto border-2 border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-800">
                       {students.map(student => (
@@ -760,8 +864,8 @@ const Calendar: React.FC = () => {
                       ))}
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {quickSelectedStudents.length > 0 
-                        ? `Wybrano ${quickSelectedStudents.length} ${quickSelectedStudents.length === 1 ? 'ucznia' : 'uczniów'}`
+                      {quickSelectedStudents.length > 0 || quickSelectedClasses.length > 0
+                        ? `Wybrano ${quickSelectedStudents.length} ${quickSelectedStudents.length === 1 ? 'ucznia' : 'uczniów'}${quickSelectedClasses.length > 0 ? ` + uczniowie z ${quickSelectedClasses.length} ${quickSelectedClasses.length === 1 ? 'klasy' : 'klas'}` : ''}`
                         : 'Brak wybranych uczniów - wydarzenie będzie widoczne dla wszystkich'}
                     </p>
                   </div>

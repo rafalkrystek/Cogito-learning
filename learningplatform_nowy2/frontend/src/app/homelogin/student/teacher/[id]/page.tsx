@@ -417,9 +417,9 @@ export default function TeacherProfilePage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => router.push('/homelogin')}
-            className="flex items-center gap-2 px-4 py-2 bg-white/60 dark:bg-gray-700/60 backdrop-blur-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-white dark:hover:bg-gray-700 hover:shadow-lg transition-all duration-200 ease-in-out border border-white/20 dark:border-gray-600"
+            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-5 h-5" />
             Powrót
           </button>
           
