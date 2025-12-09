@@ -903,6 +903,53 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                   </span>
                                 </button>
 
+                                {/* Subsection Description */}
+                                {subsection.description && (
+                                  <div className="px-4 py-3 bg-blue-50/50 border-b border-blue-100">
+                                    <div 
+                                      className="prose prose-sm max-w-none text-gray-700"
+                                      dangerouslySetInnerHTML={{ __html: subsection.description }}
+                                    />
+                                  </div>
+                                )}
+
+                                {/* DEBUG: Pokaż wszystkie dane podsekcji - USUŃ PO DEBUGOWANIU */}
+                                {process.env.NODE_ENV === 'development' && (
+                                  <details className="px-4 py-2 bg-yellow-50 border-b border-yellow-200 text-xs">
+                                    <summary className="cursor-pointer text-yellow-700 font-medium">
+                                      🔍 Debug: Dane podsekcji &quot;{subsection.name}&quot;
+                                    </summary>
+                                    <pre className="mt-2 p-2 bg-yellow-100 rounded overflow-auto max-h-60 text-xs">
+                                      {JSON.stringify({
+                                        id: subsection.id,
+                                        name: subsection.name,
+                                        description: subsection.description,
+                                        materials: subsection.materials?.map((m: any) => ({
+                                          id: m.id,
+                                          type: m.type,
+                                          title: m.title,
+                                          content: m.content?.substring(0, 100),
+                                          text: m.text?.substring(0, 100),
+                                          description: m.description?.substring(0, 100),
+                                          hasVideo: !!(m.videoUrl || m.youtubeUrl),
+                                          hasFile: !!m.fileUrl,
+                                        })),
+                                        contentBlocks: subsection.contentBlocks?.map((b: any) => ({
+                                          id: b.id,
+                                          type: b.type,
+                                          title: b.title,
+                                          content: b.content?.substring(0, 100),
+                                          text: b.text?.substring(0, 100),
+                                          description: b.description?.substring(0, 100),
+                                          hasVideo: !!(b.videoUrl || b.youtubeUrl),
+                                          hasFile: !!b.fileUrl,
+                                        })),
+                                        allKeys: Object.keys(subsection),
+                                      }, null, 2)}
+                                    </pre>
+                                  </details>
+                                )}
+
                                 {/* Lesson Materials */}
                                 {(() => {
                                   console.log(`Checking showSubsection for ${subsection.id}:`, showSubsection[subsection.id]);
@@ -910,11 +957,11 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                 })() && (
                                   <div className="p-4 space-y-3 bg-white">
                                     {(() => {
-                                      // Użyj materials lub contentBlocks (stary system)
-                                      // Sprawdź czy materials ma elementy, jeśli nie to użyj contentBlocks
-                                      const blocks = (subsection.materials && subsection.materials.length > 0) 
-                                        ? subsection.materials 
-                                        : (subsection.contentBlocks || []);
+                                      // Preferuj contentBlocks (nowy system), jeśli nie ma to użyj materials (stary system)
+                                      // contentBlocks ma priorytet bo zawiera pełniejsze dane
+                                      const blocks = (subsection.contentBlocks && subsection.contentBlocks.length > 0) 
+                                        ? subsection.contentBlocks 
+                                        : (subsection.materials || []);
                                       
                                       console.log(`Rendering materials for subsection ${subsection.id}:`, {
                                         materials: subsection.materials,
@@ -977,6 +1024,23 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                           key={block.id}
                                           className="bg-white p-4 rounded-lg hover:bg-gray-50 transition-colors"
                                         >
+                                          {/* Block Header with Icon and Title */}
+                                          {(block.title || blockType === 'video' || blockType === 'file') && (
+                                            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+                                              <span className="text-lg">
+                                                {blockType === 'text' && '📄'}
+                                                {blockType === 'video' && '🎥'}
+                                                {blockType === 'file' && '📎'}
+                                                {blockType === 'link' && '🔗'}
+                                                {blockType === 'quiz' && '❓'}
+                                                {blockType === 'math' && '🧮'}
+                                                {blockType === 'task' && '📋'}
+                                              </span>
+                                              <h4 className="font-medium text-gray-900">
+                                                {block.title || (blockType === 'video' ? 'Video' : blockType === 'file' ? 'Plik' : '')}
+                                              </h4>
+                                            </div>
+                                          )}
 
                                           {/* Text content */}
                                           {(() => {
@@ -991,9 +1055,11 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                             });
                                             return hasTextContent;
                                           })() && (
-                                            <div className="prose prose-sm max-w-none text-gray-700">
-                                              <p className="whitespace-pre-wrap">{block.content || block.text || block.description}</p>
-                                            </div>
+                                            <div 
+                                              className="prose prose-sm max-w-none text-gray-700
+                                                [&>ul]:list-disc [&>ul]:ml-4 [&>ol]:list-decimal [&>ol]:ml-4"
+                                              dangerouslySetInnerHTML={{ __html: block.content || block.text || block.description }}
+                                            />
                                           )}
 
                                           {/* Text content with only title (fallback) */}

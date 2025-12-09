@@ -19,6 +19,7 @@ import { MathEditor } from '@/components/MathEditor';
 import MathView from '@/components/MathView';
 import { DraggableContentBlock } from '@/components/DraggableContentBlock';
 import { DroppableContentArea } from '@/components/DroppableContentArea';
+import { RichTextEditor } from '@/components/RichTextEditor';
 // Dynamiczny import MDXEditor
 const MDXEditor = dynamic(() => import('@mdxeditor/editor').then(mod => mod.MDXEditor), { ssr: false });
 import {
@@ -234,6 +235,12 @@ function TeacherCourseDetailContent() {
   // Icon state
   const [iconUrl, setIconUrl] = useState<string>("");
   const [showIconPicker, setShowIconPicker] = useState(false);
+
+  // Auto-resize textarea function
+  const autoResizeTextarea = useCallback((element: HTMLTextAreaElement) => {
+    element.style.height = 'auto';
+    element.style.height = element.scrollHeight + 'px';
+  }, []);
   // Section state
   const [showSection, setShowSection] = useState<{[id:number]: boolean}>({});
   const [addingSection, setAddingSection] = useState(false);
@@ -310,7 +317,7 @@ function TeacherCourseDetailContent() {
       videoSource: type === 'video' ? 'youtube' : undefined,
       quizId: type === 'quiz' ? '' : undefined,
       mathContent: type === 'math' ? '' : undefined,
-      order: insertIndex !== undefined ? insertIndex : lessonContent.length
+      order: insertIndex !== undefined ? insertIndex : 0
     };
 
     if (insertIndex !== undefined) {
@@ -322,7 +329,13 @@ function TeacherCourseDetailContent() {
       });
       setLessonContent(newContent);
     } else {
-      setLessonContent([...lessonContent, newBlock]);
+      // Dodaj na początek listy (góra) zamiast na koniec
+      const newContent = [newBlock, ...lessonContent];
+      // Aktualizuj kolejność wszystkich bloków
+      newContent.forEach((block, index) => {
+        block.order = index;
+      });
+      setLessonContent(newContent);
     }
   };
 
@@ -367,7 +380,15 @@ function TeacherCourseDetailContent() {
           if (block.type === 'video' && block.videoUrl && block.videoUrl.startsWith('blob:')) {
             try {
               const response = await fetch(block.videoUrl);
+              if (!response.ok) {
+                console.warn(`Blob URL expired for video: ${block.title}. Skipping upload.`);
+                return { ...block, videoUrl: undefined };
+              }
               const blob = await response.blob();
+              if (blob.size === 0) {
+                console.warn(`Empty blob for video: ${block.title}. Skipping upload.`);
+                return { ...block, videoUrl: undefined };
+              }
               const fileName = block.title || `video_${Date.now()}`;
               const storageRef = ref(storage, `courses/${courseId}/lessons/${editingLessonContent}/videos/${Date.now()}_${fileName}`);
               
@@ -385,8 +406,8 @@ function TeacherCourseDetailContent() {
               return { ...block, videoUrl: firebaseUrl };
             } catch (error) {
               console.error('Error uploading video:', error);
-              alert(`Błąd podczas uploadu video: ${block.title}`);
-              return block;
+              console.warn(`Skipping video upload for: ${block.title} due to error`);
+              return { ...block, videoUrl: undefined };
             }
           }
 
@@ -394,13 +415,22 @@ function TeacherCourseDetailContent() {
           if (block.type === 'file' && block.fileUrl && block.fileUrl.startsWith('blob:')) {
             try {
               const response = await fetch(block.fileUrl);
+              if (!response.ok) {
+                console.warn(`Blob URL expired for file: ${block.title}. Skipping upload.`);
+                // Blob URL wygasł - usuń nieważny URL i zwróć blok bez pliku
+                return { ...block, fileUrl: undefined };
+              }
               const blob = await response.blob();
+              if (blob.size === 0) {
+                console.warn(`Empty blob for file: ${block.title}. Skipping upload.`);
+                return { ...block, fileUrl: undefined };
+              }
               const fileName = block.title || `file_${Date.now()}`;
               const storageRef = ref(storage, `courses/${courseId}/lessons/${editingLessonContent}/files/${Date.now()}_${fileName}`);
               
               // Upload z public metadata
               await uploadBytes(storageRef, blob, {
-                contentType: blob.type,
+                contentType: blob.type || 'application/octet-stream',
                 cacheControl: 'public, max-age=31536000',
                 customMetadata: {
                   'Access-Control-Allow-Origin': '*'
@@ -411,8 +441,9 @@ function TeacherCourseDetailContent() {
               return { ...block, fileUrl: firebaseUrl };
             } catch (error) {
               console.error('Error uploading file:', error);
-              alert(`Błąd podczas uploadu pliku: ${block.title}`);
-              return block;
+              // Nie pokazuj alertu, po prostu pomiń ten plik
+              console.warn(`Skipping file upload for: ${block.title} due to error`);
+              return { ...block, fileUrl: undefined };
             }
           }
 
@@ -1995,10 +2026,19 @@ function TeacherCourseDetailContent() {
                 </label>
                 <textarea
                   value={editedDescription}
-                  onChange={(e) => setEditedDescription(e.target.value)}
-                  className="w-full p-2 rounded border-2 border-white/30 bg-white/20 text-white placeholder-white/70 resize-none"
+                  onChange={(e) => {
+                    setEditedDescription(e.target.value);
+                    autoResizeTextarea(e.target);
+                  }}
+                  onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                  ref={(el) => {
+                    if (el && editedDescription) {
+                      setTimeout(() => autoResizeTextarea(el), 0);
+                    }
+                  }}
+                  className="w-full p-2 rounded border-2 border-white/30 bg-white/20 text-white placeholder-white/70 resize-none overflow-hidden transition-all duration-200"
+                  style={{ minHeight: '60px' }}
                   placeholder="Opis kursu"
-                  rows={2}
                 />
               </div>
               <div className="flex gap-2 mt-2">
@@ -2343,9 +2383,19 @@ function TeacherCourseDetailContent() {
                     <div className="space-y-3">
                       <textarea
                         placeholder="Opis egzaminu..."
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 min-h-[100px]"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none overflow-hidden transition-all duration-200"
+                        style={{ minHeight: '100px' }}
                         value={sectionDescription}
-                        onChange={e => setSectionDescription(e.target.value)}
+                        onChange={e => {
+                          setSectionDescription(e.target.value);
+                          autoResizeTextarea(e.target);
+                        }}
+                        onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                        ref={(el) => {
+                          if (el && sectionDescription) {
+                            setTimeout(() => autoResizeTextarea(el), 0);
+                          }
+                        }}
                       />
                       
                       {/* Input do załączania plików */}
@@ -2704,12 +2754,11 @@ function TeacherCourseDetailContent() {
 
                                       {/* Edycja treści bloku */}
                                       {block.type === 'text' && (
-                                        <textarea
-                                          placeholder="Wpisz tekst..."
-                                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                                          rows={4}
+                                        <RichTextEditor
                                           value={block.content || ''}
-                                          onChange={(e) => updateContentBlock(Number(block.id), { content: e.target.value })}
+                                          onChange={(newContent) => updateContentBlock(Number(block.id), { content: newContent })}
+                                          placeholder="Wpisz tekst..."
+                                          minHeight="120px"
                                         />
                                       )}
 
@@ -2922,10 +2971,19 @@ function TeacherCourseDetailContent() {
                                   
                                   <textarea
                                     placeholder="Opis materiału"
-                                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                                    rows={3}
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none overflow-hidden transition-all duration-200"
+                                    style={{ minHeight: '80px' }}
                                     value={newMaterial.description}
-                                    onChange={e => setNewMaterial(prev => ({...prev, description: e.target.value}))}
+                                    onChange={e => {
+                                      setNewMaterial(prev => ({...prev, description: e.target.value}));
+                                      autoResizeTextarea(e.target);
+                                    }}
+                                    onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                                    ref={(el) => {
+                                      if (el && newMaterial.description) {
+                                        setTimeout(() => autoResizeTextarea(el), 0);
+                                      }
+                                    }}
                                   />
 
                                   {newMaterial.type === 'math' && (
@@ -3095,10 +3153,19 @@ function TeacherCourseDetailContent() {
                                   {newMaterial.type === 'text' && (
                                     <textarea
                                       placeholder="Treść materiału"
-                                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                                      rows={6}
+                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none overflow-hidden transition-all duration-200"
+                                      style={{ minHeight: '150px' }}
                                       value={newMaterial.content}
-                                      onChange={e => setNewMaterial(prev => ({...prev, content: e.target.value}))}
+                                      onChange={e => {
+                                        setNewMaterial(prev => ({...prev, content: e.target.value}));
+                                        autoResizeTextarea(e.target);
+                                      }}
+                                      onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                                      ref={(el) => {
+                                        if (el && newMaterial.content) {
+                                          setTimeout(() => autoResizeTextarea(el), 0);
+                                        }
+                                      }}
                                     />
                                   )}
 
@@ -3196,7 +3263,11 @@ function TeacherCourseDetailContent() {
                                     </div>
                                     
                                     {block.type === 'text' && block.content && (
-                                      <p className="text-gray-700 whitespace-pre-wrap">{block.content}</p>
+                                      <div 
+                                        className="text-gray-700 prose prose-sm max-w-none
+                                          [&>ul]:list-disc [&>ul]:ml-4 [&>ol]:list-decimal [&>ol]:ml-4"
+                                        dangerouslySetInnerHTML={{ __html: block.content }}
+                                      />
                                     )}
                                     
                                     {block.type === 'math' && block.mathContent && (

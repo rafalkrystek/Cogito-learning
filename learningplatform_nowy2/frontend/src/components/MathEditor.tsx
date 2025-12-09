@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import 'mathlive';
+import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
 
 // Declare the custom element type
@@ -19,9 +18,21 @@ export const MathEditor: React.FC<MathEditorProps> = ({
   readOnly = false,
 }) => {
   const mathfieldRef = useRef<MathfieldElement>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Dynamically import mathlive and configure fonts
+  useEffect(() => {
+    const loadMathLive = async () => {
+      const MathLive = await import('mathlive');
+      // Configure fonts directory to use CDN
+      MathLive.MathfieldElement.fontsDirectory = 'https://unpkg.com/mathlive/dist/fonts/';
+      setIsLoaded(true);
+    };
+    loadMathLive();
+  }, []);
 
   useEffect(() => {
-    if (!mathfieldRef.current) return;
+    if (!mathfieldRef.current || !isLoaded) return;
 
     // Configure MathLive options using runtime-safe access
     // Using a loose-typed handle to avoid private API typing issues
@@ -61,7 +72,11 @@ export const MathEditor: React.FC<MathEditorProps> = ({
         mathfield.removeEventListener('input', handleInput);
       }
     };
-  }, [initialValue, onChange, readOnly]);
+  }, [initialValue, onChange, readOnly, isLoaded]);
+
+  if (!isLoaded) {
+    return <div className="animate-pulse bg-gray-200 h-10 rounded" style={{ minWidth: '200px' }} />;
+  }
 
   // @ts-expect-error math-field is a custom element provided by mathlive
   return <math-field ref={mathfieldRef as unknown as React.Ref<MathfieldElement>} />;
