@@ -31,6 +31,27 @@ const GRADE_TYPES = [
   { value: 'inne', label: 'Inne' },
 ];
 
+// Dostępne oceny od 0 do 6 (z plusami i minusami)
+const AVAILABLE_GRADES = [
+  { value: '0', label: '0' },
+  { value: '1', label: '1' },
+  { value: '1+', label: '1+' },
+  { value: '2-', label: '2-' },
+  { value: '2', label: '2' },
+  { value: '2+', label: '2+' },
+  { value: '3-', label: '3-' },
+  { value: '3', label: '3' },
+  { value: '3+', label: '3+' },
+  { value: '4-', label: '4-' },
+  { value: '4', label: '4' },
+  { value: '4+', label: '4+' },
+  { value: '5-', label: '5-' },
+  { value: '5', label: '5' },
+  { value: '5+', label: '5+' },
+  { value: '6-', label: '6-' },
+  { value: '6', label: '6' },
+];
+
 const GradeForm: React.FC<{ onGradeAdded?: () => void }> = ({ onGradeAdded }) => {
   const { user } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
@@ -124,15 +145,18 @@ const GradeForm: React.FC<{ onGradeAdded?: () => void }> = ({ onGradeAdded }) =>
       </div>
       <div className="flex gap-4">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Ocena (liczbowa lub opisowa)</label>
-          <input
-            type="text"
+          <label className="block text-sm font-medium text-gray-700 mb-1">Ocena (0-6)</label>
+          <select
             className="w-full px-3 py-2 border border-gray-300 rounded"
             value={grade}
             onChange={e => setGrade(e.target.value)}
-            placeholder="np. 5 lub +, -, bdb, dst, ndst"
             required
-          />
+          >
+            <option value="">-- wybierz ocenę --</option>
+            {AVAILABLE_GRADES.map(g => (
+              <option key={g.value} value={g.value}>{g.label}</option>
+            ))}
+          </select>
         </div>
         <div className="flex-1">
           <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>

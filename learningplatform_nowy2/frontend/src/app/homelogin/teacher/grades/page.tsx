@@ -6,9 +6,9 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { Plus, ArrowLeft, User, Award, Users } from 'lucide-react';
+import { Plus, ArrowLeft, User, Award, Users, Pencil, Trash2, X } from 'lucide-react';
 import { db } from '@/config/firebase';
-import { collection, getDocs, addDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, query, where, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { Class } from '@/types/models';
 
 interface Grade {
@@ -83,11 +83,46 @@ export default function TeacherGradesPage() {
   const [addGradeSuccess, setAddGradeSuccess] = useState('');
   const [addGradeError, setAddGradeError] = useState('');
   
+  // Edycja i usuwanie ocen
+  const [showEditGradeModal, setShowEditGradeModal] = useState(false);
+  const [editingGrade, setEditingGrade] = useState<Grade | null>(null);
+  const [editGradeData, setEditGradeData] = useState({
+    grade: '',
+    description: '',
+    date: '',
+    gradeType: ''
+  });
+  const [editGradeLoading, setEditGradeLoading] = useState(false);
+  const [deleteConfirmGrade, setDeleteConfirmGrade] = useState<Grade | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [selectedGradeDetails, setSelectedGradeDetails] = useState<Grade | null>(null);
+  
 
   const GRADE_TYPES = [
     { value: 'kartkówka', label: 'Kartkówka' },
     { value: 'sprawdzian', label: 'Sprawdzian' },
     { value: 'inne', label: 'Inne' },
+  ];
+
+  // Dostępne oceny od 0 do 6 (z plusami i minusami)
+  const AVAILABLE_GRADES = [
+    { value: '0', label: '0' },
+    { value: '1', label: '1' },
+    { value: '1+', label: '1+' },
+    { value: '2-', label: '2-' },
+    { value: '2', label: '2' },
+    { value: '2+', label: '2+' },
+    { value: '3-', label: '3-' },
+    { value: '3', label: '3' },
+    { value: '3+', label: '3+' },
+    { value: '4-', label: '4-' },
+    { value: '4', label: '4' },
+    { value: '4+', label: '4+' },
+    { value: '5-', label: '5-' },
+    { value: '5', label: '5' },
+    { value: '5+', label: '5+' },
+    { value: '6-', label: '6-' },
+    { value: '6', label: '6' },
   ];
 
   const fetchClasses = useCallback(async () => {
@@ -342,6 +377,63 @@ export default function TeacherGradesPage() {
     }
   };
 
+  // Funkcja do usuwania oceny
+  const handleDeleteGrade = async (grade: Grade) => {
+    if (!grade.id) return;
+    
+    setDeleteLoading(true);
+    try {
+      await deleteDoc(doc(db, 'grades', grade.id));
+      console.log('✅ Ocena usunięta:', grade.id);
+      setDeleteConfirmGrade(null);
+      await fetchGrades();
+    } catch (error) {
+      console.error('❌ Błąd podczas usuwania oceny:', error);
+      alert('Błąd podczas usuwania oceny');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  // Funkcja do otwierania modalu edycji
+  const openEditModal = (grade: Grade) => {
+    setEditingGrade(grade);
+    setEditGradeData({
+      grade: String(grade.grade || grade.value || grade.value_grade || ''),
+      description: grade.description || grade.comments || '',
+      date: grade.date || grade.graded_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+      gradeType: grade.gradeType || grade.type || ''
+    });
+    setShowEditGradeModal(true);
+  };
+
+  // Funkcja do zapisywania edytowanej oceny
+  const handleEditGrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGrade?.id) return;
+    
+    setEditGradeLoading(true);
+    try {
+      await updateDoc(doc(db, 'grades', editingGrade.id), {
+        grade: editGradeData.grade,
+        value: editGradeData.grade,
+        description: editGradeData.description,
+        date: editGradeData.date,
+        gradeType: editGradeData.gradeType,
+        updated_at: new Date()
+      });
+      
+      console.log('✅ Ocena zaktualizowana:', editingGrade.id);
+      setShowEditGradeModal(false);
+      setEditingGrade(null);
+      await fetchGrades();
+    } catch (error) {
+      console.error('❌ Błąd podczas edycji oceny:', error);
+      alert('Błąd podczas edycji oceny');
+    } finally {
+      setEditGradeLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -502,42 +594,16 @@ export default function TeacherGradesPage() {
                                     <div className="flex flex-wrap gap-2">
                                       {studentGrades.map((grade) => {
                                         const gradeValue = grade.grade || grade.value || grade.value_grade;
-                                        const gradeDate = grade.date || grade.graded_at || '';
-                                        const gradeType = grade.gradeType || grade.type || '';
-                                        const gradeDescription = grade.description || grade.comments || '';
                                         
                                         return (
-                                          <div key={grade.id} className="relative group">
-                                            <button
-                                              className={`px-3 py-1.5 rounded-lg font-bold text-sm shadow-sm transition-all duration-200 hover:scale-105 hover:shadow-md ${getGradeColor(gradeValue)}`}
-                                            >
-                                              {gradeValue}
-                                            </button>
-                                            
-                                            {/* Tooltip */}
-                                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50 min-w-[250px] max-w-[350px]">
-                                              <div className="space-y-1">
-                                                <div className="font-semibold">Ocena: {gradeValue}</div>
-                                                {gradeType && (
-                                                  <div><span className="font-medium">Typ:</span> {gradeType}</div>
-                                                )}
-                                                {grade.quiz_title && (
-                                                  <div><span className="font-medium">Quiz:</span> {grade.quiz_title}</div>
-                                                )}
-                                                {grade.percentage !== undefined && (
-                                                  <div><span className="font-medium">Wynik:</span> {grade.percentage}%</div>
-                                                )}
-                                                {gradeDescription && (
-                                                  <div><span className="font-medium">Opis:</span> {gradeDescription}</div>
-                                                )}
-                                                {gradeDate && (
-                                                  <div><span className="font-medium">Data:</span> {new Date(gradeDate).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '/')}</div>
-                                                )}
-                                              </div>
-                                              {/* Arrow */}
-                                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-gray-900"></div>
-                                            </div>
-                                          </div>
+                                          <button
+                                            key={grade.id}
+                                            onClick={() => setSelectedGradeDetails(grade)}
+                                            className={`px-3 py-1.5 rounded-lg font-bold text-sm shadow-sm transition-all duration-200 hover:scale-105 hover:shadow-md cursor-pointer ${getGradeColor(gradeValue)}`}
+                                            title="Kliknij aby zobaczyć szczegóły"
+                                          >
+                                            {gradeValue}
+                                          </button>
                                         );
                                       })}
                                     </div>
@@ -580,23 +646,15 @@ export default function TeacherGradesPage() {
                                 <div className="flex flex-wrap gap-2">
                                   {studentGrades.map((grade) => {
                                     const gradeValue = grade.grade || grade.value || grade.value_grade;
-                                    const gradeDate = grade.date || grade.graded_at || '';
-                                    const gradeType = grade.gradeType || grade.type || '';
                                     
                                     return (
-                                      <div key={grade.id} className="flex flex-col">
-                                        <button
-                                          className={`min-w-[48px] min-h-[48px] px-4 py-2 rounded-lg font-bold text-base shadow-sm ${getGradeColor(gradeValue)}`}
-                                        >
-                                          {gradeValue}
-                                        </button>
-                                        {(gradeType || gradeDate) && (
-                                          <div className="mt-1 text-[10px] text-gray-600 text-center">
-                                            {gradeType && <div className="truncate">{gradeType}</div>}
-                                            {gradeDate && <div>{new Date(gradeDate).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })}</div>}
-                                          </div>
-                                        )}
-                                      </div>
+                                      <button
+                                        key={grade.id}
+                                        onClick={() => setSelectedGradeDetails(grade)}
+                                        className={`min-w-[48px] min-h-[48px] px-4 py-2 rounded-lg font-bold text-base shadow-sm ${getGradeColor(gradeValue)}`}
+                                      >
+                                        {gradeValue}
+                                      </button>
                                     );
                                   })}
                                 </div>
@@ -718,14 +776,17 @@ export default function TeacherGradesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Ocena *
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={gradeData.grade}
                     onChange={(e) => setGradeData(prev => ({ ...prev, grade: e.target.value }))}
-                    placeholder="np. 4, 5, 3+"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
-                  />
+                  >
+                    <option value="">Wybierz ocenę (0-6)</option>
+                    {AVAILABLE_GRADES.map(grade => (
+                      <option key={grade.value} value={grade.value}>{grade.label}</option>
+                    ))}
+                  </select>
                 </div>
                 
                 {/* Typ oceny */}
@@ -807,6 +868,253 @@ export default function TeacherGradesPage() {
         </div>
                         </div>
                       )}
+
+      {/* Modal edycji oceny */}
+      {showEditGradeModal && editingGrade && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-gray-800">Edytuj ocenę</h2>
+                <button
+                  onClick={() => { setShowEditGradeModal(false); setEditingGrade(null); }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Uczeń:</span> {editingGrade.studentName}
+                </p>
+              </div>
+
+              <form onSubmit={handleEditGrade} className="space-y-4">
+                {/* Ocena */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Ocena *
+                  </label>
+                  <select
+                    value={editGradeData.grade}
+                    onChange={(e) => setEditGradeData(prev => ({ ...prev, grade: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Wybierz ocenę (0-6)</option>
+                    {AVAILABLE_GRADES.map(grade => (
+                      <option key={grade.value} value={grade.value}>{grade.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Typ oceny */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Typ oceny
+                  </label>
+                  <select
+                    value={editGradeData.gradeType}
+                    onChange={(e) => setEditGradeData(prev => ({ ...prev, gradeType: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Wybierz typ</option>
+                    {GRADE_TYPES.map(type => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Data */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Data *
+                  </label>
+                  <input
+                    type="date"
+                    value={editGradeData.date}
+                    onChange={(e) => setEditGradeData(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                {/* Opis */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Opis
+                  </label>
+                  <textarea
+                    value={editGradeData.description}
+                    onChange={(e) => setEditGradeData(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Dodatkowe informacje o ocenie..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Przyciski */}
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => { setShowEditGradeModal(false); setEditingGrade(null); }}
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Anuluj
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={editGradeLoading}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {editGradeLoading ? 'Zapisywanie...' : 'Zapisz zmiany'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal szczegółów oceny */}
+      {selectedGradeDetails && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800">Szczegóły oceny</h3>
+              <button
+                onClick={() => setSelectedGradeDetails(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Ocena - duża */}
+            <div className="text-center mb-6">
+              <div className={`inline-flex items-center justify-center w-20 h-20 rounded-2xl text-3xl font-bold shadow-lg ${getGradeColor(selectedGradeDetails.grade || selectedGradeDetails.value || selectedGradeDetails.value_grade)}`}>
+                {selectedGradeDetails.grade || selectedGradeDetails.value || selectedGradeDetails.value_grade}
+              </div>
+            </div>
+
+            {/* Szczegóły */}
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-gray-600">Uczeń:</span>
+                <span className="font-medium text-gray-800">{selectedGradeDetails.studentName}</span>
+              </div>
+              
+              {(selectedGradeDetails.gradeType || selectedGradeDetails.type) && (
+                <div className="flex justify-between py-2 border-b border-gray-100">
+                  <span className="text-gray-600">Typ:</span>
+                  <span className="font-medium text-gray-800">{selectedGradeDetails.gradeType || selectedGradeDetails.type}</span>
+                </div>
+              )}
+              
+              {selectedGradeDetails.quiz_title && (
+                <div className="flex justify-between py-2 border-b border-gray-100">
+                  <span className="text-gray-600">Quiz:</span>
+                  <span className="font-medium text-gray-800">{selectedGradeDetails.quiz_title}</span>
+                </div>
+              )}
+              
+              {selectedGradeDetails.percentage !== undefined && (
+                <div className="flex justify-between py-2 border-b border-gray-100">
+                  <span className="text-gray-600">Wynik:</span>
+                  <span className="font-medium text-gray-800">{selectedGradeDetails.percentage}%</span>
+                </div>
+              )}
+              
+              {(selectedGradeDetails.description || selectedGradeDetails.comments) && (
+                <div className="py-2 border-b border-gray-100">
+                  <span className="text-gray-600 block mb-1">Opis:</span>
+                  <span className="text-gray-800">{selectedGradeDetails.description || selectedGradeDetails.comments}</span>
+                </div>
+              )}
+              
+              {(selectedGradeDetails.date || selectedGradeDetails.graded_at) && (
+                <div className="flex justify-between py-2 border-b border-gray-100">
+                  <span className="text-gray-600">Data:</span>
+                  <span className="font-medium text-gray-800">
+                    {new Date(selectedGradeDetails.date || selectedGradeDetails.graded_at || '').toLocaleDateString('pl-PL', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      year: 'numeric' 
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Przyciski akcji */}
+            {!selectedGradeDetails.quiz_title ? (
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setSelectedGradeDetails(null);
+                    openEditModal(selectedGradeDetails);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors font-medium"
+                >
+                  <Pencil className="w-4 h-4" />
+                  Edytuj
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedGradeDetails(null);
+                    setDeleteConfirmGrade(selectedGradeDetails);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl transition-colors font-medium"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Usuń
+                </button>
+              </div>
+            ) : (
+              <div className="text-center text-sm text-gray-500 py-2 bg-gray-50 rounded-lg">
+                Ocena z quizu - nie można edytować ani usunąć
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal potwierdzenia usunięcia */}
+      {deleteConfirmGrade && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-8 h-8 text-red-600" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-2">Usuń ocenę?</h3>
+              <p className="text-gray-600 mb-2">
+                Czy na pewno chcesz usunąć ocenę <span className="font-bold">{deleteConfirmGrade.grade || deleteConfirmGrade.value}</span>?
+              </p>
+              <p className="text-sm text-gray-500 mb-6">
+                Uczeń: {deleteConfirmGrade.studentName}
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDeleteConfirmGrade(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={deleteLoading}
+                >
+                  Anuluj
+                </button>
+                <button
+                  onClick={() => handleDeleteGrade(deleteConfirmGrade)}
+                  disabled={deleteLoading}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 transition-colors"
+                >
+                  {deleteLoading ? 'Usuwanie...' : 'Usuń'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
