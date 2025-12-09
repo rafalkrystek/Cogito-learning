@@ -6,7 +6,7 @@ import { GripVertical, X } from 'lucide-react';
 
 interface ContentBlock {
   id: string | number;
-  type: "text" | "file" | "video" | "quiz" | "math";
+  type: "text" | "file" | "video" | "quiz" | "math" | "task";
   content?: string;
   title?: string;
   fileUrl?: string;
@@ -59,6 +59,7 @@ export const DraggableContentBlock: React.FC<DraggableContentBlockProps> = ({
       case 'video': return '🎥';
       case 'quiz': return '❓';
       case 'math': return '🧮';
+      case 'task': return '✏️';
       default: return '📄';
     }
   };

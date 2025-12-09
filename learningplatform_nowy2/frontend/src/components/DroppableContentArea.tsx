@@ -22,7 +22,7 @@ import { DropZoneIndicator } from './DropZoneIndicator';
 
 interface ContentBlock {
   id: string | number;
-  type: "text" | "file" | "video" | "quiz" | "math";
+  type: "text" | "file" | "video" | "quiz" | "math" | "task";
   content?: string;
   title?: string;
   fileUrl?: string;
@@ -118,6 +118,7 @@ export const DroppableContentArea: React.FC<DroppableContentAreaProps> = ({
                 {activeBlock.type === 'video' && '🎥'}
                 {activeBlock.type === 'quiz' && '❓'}
                 {activeBlock.type === 'math' && '🧮'}
+                {activeBlock.type === 'task' && '✏️'}
               </span>
               <span className="font-medium capitalize">{activeBlock.type}</span>
             </div>

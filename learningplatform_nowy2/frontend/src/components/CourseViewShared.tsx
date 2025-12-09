@@ -40,10 +40,25 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
     const fetchQuizTitles = async () => {
       const quizIds = new Set<string>();
       
-      // Zbierz wszystkie quizId z sekcji
+      // Zbierz wszystkie quizId z sekcji - sprawdź wszystkie możliwe miejsca
       sections.forEach((section: any) => {
+        // Sprawdź contents (nowy system)
+        section.contents?.forEach((block: any) => {
+          if (block.type === 'quiz' && block.quizId) {
+            quizIds.add(block.quizId);
+          }
+        });
+        
+        // Sprawdź subsections (stary system)
         section.subsections?.forEach((subsection: any) => {
+          // contentBlocks
           subsection.contentBlocks?.forEach((block: any) => {
+            if (block.type === 'quiz' && block.quizId) {
+              quizIds.add(block.quizId);
+            }
+          });
+          // materials
+          subsection.materials?.forEach((block: any) => {
             if (block.type === 'quiz' && block.quizId) {
               quizIds.add(block.quizId);
             }
@@ -660,6 +675,28 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                     </div>
                                   )}
 
+                                  {/* Task content - zadanie */}
+                                  {blockWithType.type === 'task' && (
+                                    <div className="space-y-3">
+                                      {/* Nagłówek zadania */}
+                                      {blockWithType.title && (
+                                        <div className="flex items-center gap-2 text-orange-600 font-medium border-b border-orange-200 pb-2">
+                                          <span>✏️</span>
+                                          <span>{blockWithType.title}</span>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Treść zadania */}
+                                      {(blockWithType.content || blockWithType.text || blockWithType.description) && (
+                                        <div 
+                                          className="prose prose-sm max-w-none text-gray-700 bg-orange-50 p-4 rounded-lg border border-orange-200
+                                            [&>ul]:list-disc [&>ul]:ml-4 [&>ol]:list-decimal [&>ol]:ml-4"
+                                          dangerouslySetInnerHTML={{ __html: blockWithType.content || blockWithType.text || blockWithType.description }}
+                                        />
+                                      )}
+                                    </div>
+                                  )}
+
                                   {/* Video - Upload */}
                                   {blockWithType.type === 'video' && blockWithType.videoUrl && !blockWithType.youtubeUrl && !blockWithType.link && (
                                     <div className="mt-3">
@@ -1081,6 +1118,20 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                             </div>
                                           )}
 
+                                          {/* Task content - zadanie */}
+                                          {block.type === 'task' && (
+                                            <div className="space-y-3">
+                                              {/* Treść zadania */}
+                                              {(block.content || block.text || block.description) && (
+                                                <div 
+                                                  className="prose prose-sm max-w-none text-gray-700 bg-orange-50 p-4 rounded-lg border border-orange-200
+                                                    [&>ul]:list-disc [&>ul]:ml-4 [&>ol]:list-decimal [&>ol]:ml-4"
+                                                  dangerouslySetInnerHTML={{ __html: block.content || block.text || block.description }}
+                                                />
+                                              )}
+                                            </div>
+                                          )}
+
                                   {/* Fallback for any material type without content */}
                                   {!(block.type === 'text' && (block.content || block.text || block.description)) && 
                                    !(block.type === 'video' && (block.videoUrl || block.youtubeUrl)) && 
@@ -1088,6 +1139,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                    !(block.type === 'link' && (block.link || block.url)) && 
                                    !(block.type === 'quiz' && block.quizId) && 
                                    !(block.type === 'math' && block.mathContent) && 
+                                   !(block.type === 'task') && 
                                    block.title && (
                                     <div className="prose prose-sm max-w-none text-gray-700">
                                       <h3 className="font-semibold text-gray-900 mb-2">{block.title}</h3>

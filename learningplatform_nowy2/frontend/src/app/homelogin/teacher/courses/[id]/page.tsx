@@ -90,7 +90,7 @@ interface Section {
 
 interface ContentBlock {
   id: string | number;
-  type: "text" | "file" | "video" | "quiz" | "math";
+  type: "text" | "file" | "video" | "quiz" | "math" | "task";
   content?: string;
   title?: string;
   fileUrl?: string;
@@ -307,12 +307,12 @@ function TeacherCourseDetailContent() {
     setEditingContentId(null);
   };
 
-  const addContentBlock = (type: "text" | "file" | "video" | "quiz" | "math", insertIndex?: number) => {
+  const addContentBlock = (type: "text" | "file" | "video" | "quiz" | "math" | "task", insertIndex?: number) => {
     const newBlock: ContentBlock = {
       id: Date.now(),
       type,
-      content: type === 'text' ? '' : undefined,
-      title: type === 'file' ? '' : undefined,
+      content: (type === 'text' || type === 'task') ? '' : undefined,
+      title: (type === 'file' || type === 'task') ? '' : undefined,
       youtubeUrl: type === 'video' ? '' : undefined,
       videoSource: type === 'video' ? 'youtube' : undefined,
       quizId: type === 'quiz' ? '' : undefined,
@@ -2736,6 +2736,12 @@ function TeacherCourseDetailContent() {
                                   >
                                     🧮 Dodaj matematykę
                                   </button>
+                                  <button
+                                    onClick={() => addContentBlock('task')}
+                                    className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                                  >
+                                    ✏️ Dodaj zadanie
+                                  </button>
                                 </div>
 
                                 {/* Lista bloków treści z drag and drop */}
@@ -2760,6 +2766,28 @@ function TeacherCourseDetailContent() {
                                           placeholder="Wpisz tekst..."
                                           minHeight="120px"
                                         />
+                                      )}
+
+                                      {block.type === 'task' && (
+                                        <div className="space-y-3">
+                                          <div className="flex items-center gap-2 text-orange-600 font-medium">
+                                            <span>✏️</span>
+                                            <span>Zadanie</span>
+                                          </div>
+                                          <input
+                                            type="text"
+                                            value={block.title || ''}
+                                            onChange={(e) => updateContentBlock(Number(block.id), { title: e.target.value })}
+                                            placeholder="Tytuł zadania..."
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                                          />
+                                          <RichTextEditor
+                                            value={block.content || ''}
+                                            onChange={(newContent) => updateContentBlock(Number(block.id), { content: newContent })}
+                                            placeholder="Treść zadania..."
+                                            minHeight="150px"
+                                          />
+                                        </div>
                                       )}
 
                                       {block.type === 'math' && (
