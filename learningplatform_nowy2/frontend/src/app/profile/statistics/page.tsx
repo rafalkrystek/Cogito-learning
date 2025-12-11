@@ -526,7 +526,7 @@ export default function StatisticsPage() {
   };
 
     return (
-    <div className="min-h-screen bg-gradient-to-br from-[#F4F6FB] via-white to-[#E8ECFF] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 py-8 px-4">
+    <div className="min-h-screen bg-gradient-to-br from-[#F4F6FB] via-white to-[#E8ECFF] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 py-8 px-4 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Theme Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <ThemeToggle />

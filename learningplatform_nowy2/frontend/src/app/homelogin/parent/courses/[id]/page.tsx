@@ -382,7 +382,7 @@ function ParentCourseDetailContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
       <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
@@ -391,7 +391,7 @@ function ParentCourseDetailContent() {
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
           </button>
 
           <div className="flex items-center gap-3">

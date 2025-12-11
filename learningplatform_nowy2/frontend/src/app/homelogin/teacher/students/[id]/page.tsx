@@ -469,7 +469,7 @@ export default function StudentProfilePage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div className="flex items-center justify-center min-h-64 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
@@ -477,21 +477,21 @@ export default function StudentProfilePage() {
 
   if (error || !student) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex flex-col items-center justify-center w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="text-red-600 mb-4">{error || 'Nie udało się załadować profilu ucznia'}</div>
         <button 
           onClick={() => window.location.href = '/homelogin'}
           className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
         >
           <ArrowLeft className="w-5 h-5" />
-          Powrót
+          <span className="hidden sm:inline">Powrót</span>
         </button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 w-full">
+    <div className="min-h-screen bg-gray-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
       <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
@@ -500,7 +500,7 @@ export default function StudentProfilePage() {
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
           </button>
 
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">

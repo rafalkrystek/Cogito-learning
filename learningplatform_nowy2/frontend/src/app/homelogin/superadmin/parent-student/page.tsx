@@ -152,7 +152,7 @@ export default function ParentStudentManagement() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu - Responsywny */}
       <div className="bg-white/90 backdrop-blur-lg border-b border-gray-200 shadow-sm sticky top-0 z-40">
         <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
@@ -165,7 +165,7 @@ export default function ParentStudentManagement() {
                 aria-label="Powrót do panelu superadministratora"
               >
                 <ArrowLeft className="w-5 h-5" />
-                Powrót
+                <span className="hidden sm:inline">Powrót</span>
               </Link>
               
               <div className="flex items-center gap-2 min-w-0">

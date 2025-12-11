@@ -867,14 +867,14 @@ export default function ClassesPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div className="flex items-center justify-center min-h-64 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-blue-50 w-full">
+    <div className="min-h-screen bg-blue-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
       <div className="bg-white/90 backdrop-blur-xl border-b border-white/30 shadow-sm">
         <div className="px-4 sm:px-6 lg:px-8 py-6">
@@ -884,7 +884,7 @@ export default function ClassesPage() {
               className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
               <ArrowLeft className="w-5 h-5" />
-              Powrót
+              <span className="hidden sm:inline">Powrót</span>
             </button>
 
             <div className="text-center">

@@ -683,7 +683,7 @@ export default function TeacherCourses() {
   }, [courses, searchTerm, courseTypeFilter, filterCourses]);
 
   return (
-    <div className="min-h-screen bg-blue-50">
+    <div className="min-h-screen bg-blue-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-8 mb-8 shadow-xl">
         <div className="flex items-center justify-between">

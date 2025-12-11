@@ -205,7 +205,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header with course info */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-12 px-6">
         <div className="max-w-7xl mx-auto">

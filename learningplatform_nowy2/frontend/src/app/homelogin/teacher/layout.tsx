@@ -141,7 +141,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   
   return (
     <TeacherRoute>
-      <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900 w-full max-w-none transition-colors duration-200">
+      <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900 w-full max-w-none transition-colors duration-200 overflow-x-hidden">
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-sm">
           <div className="flex flex-col flex-1">
@@ -257,8 +257,12 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
               </nav>
 
               {/* Mobile Bottom Actions */}
-              <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
-
+              <div 
+                className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-2"
+                style={{ 
+                  paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+                }}
+              >
                 <button 
                   onClick={handleLogout}
                   className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -272,9 +276,15 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         </div>
 
         {/* Main Content */}
-        <div className="lg:pl-64 flex-1 w-full max-w-none flex flex-col">
+        <div className="lg:pl-64 flex-1 w-full max-w-full flex flex-col overflow-x-hidden" style={{ maxWidth: '100vw' }}>
           {/* Header */}
-          <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 h-16 flex items-center justify-between px-6 shadow-sm flex-shrink-0 transition-colors duration-200">
+          <header 
+            className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 h-16 flex items-center justify-between px-6 shadow-sm flex-shrink-0 transition-colors duration-200"
+            style={{ 
+              paddingTop: 'env(safe-area-inset-top)',
+              minHeight: 'calc(4rem + env(safe-area-inset-top))'
+            }}
+          >
             <div className="flex items-center gap-4">
               {/* Mobile menu button */}
               <button
@@ -302,7 +312,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
           </header>
 
           {/* Page Content */}
-          <main className="flex-1 flex flex-col min-h-0">
+          <main className="flex-1 flex flex-col min-h-0 overflow-x-hidden w-full max-w-full">
             {children}
           </main>
         </div>

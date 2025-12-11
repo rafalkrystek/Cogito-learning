@@ -1108,7 +1108,7 @@ function SuperAdminDashboardContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 w-full overflow-x-hidden">
+    <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Top Navigation Bar */}
       <div className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-white/10 backdrop-blur-xl border-b border-gray-200 dark:border-white/20 z-50 flex items-center justify-between px-4 lg:px-6">
         <div className="flex items-center gap-4">

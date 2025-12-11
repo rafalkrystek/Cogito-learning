@@ -601,7 +601,7 @@ export default function QuizManagementPage() {
   }
 
   return (
-    <div className="w-full h-full bg-gray-50">
+    <div className="w-full h-full bg-gray-50 overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <div className="w-full h-full p-6 flex flex-col">
         {/* Main Page Header */}
         <div className="relative overflow-hidden mb-8 flex-shrink-0">
@@ -614,7 +614,7 @@ export default function QuizManagementPage() {
                   className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
                 >
                   <ArrowLeft className="w-5 h-5" />
-                  Powrót
+                  <span className="hidden sm:inline">Powrót</span>
                 </button>
                 <div>
                   <h1 className="text-3xl font-bold text-gray-900 mb-2">

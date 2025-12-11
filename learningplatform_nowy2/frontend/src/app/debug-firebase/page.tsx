@@ -152,7 +152,7 @@ export default function DebugFirebase() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 p-8 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <div className="max-w-4xl mx-auto">
         <h1 className="text-2xl font-bold mb-6">Debug Firebase Data</h1>
         

@@ -450,14 +450,14 @@ export default function StudentGroupChatsPage() {
   });
 
   return (
-    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4 flex flex-col overflow-hidden">
+    <div className="min-h-screen h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-2 sm:p-4 flex flex-col overflow-hidden overflow-x-hidden w-full max-w-full" style={{ maxHeight: '100vh', maxWidth: '100vw' }}>
       {/* Theme Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <ThemeToggle />
       </div>
 
       {/* Modern Header */}
-      <div className="mb-6 flex-shrink-0">
+      <div className="mb-4 sm:mb-6 flex-shrink-0">
         <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-6 shadow-lg border border-white/20">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -466,7 +466,7 @@ export default function StudentGroupChatsPage() {
                 className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
               >
                 <ArrowLeft className="w-5 h-5" />
-                Powrót
+                <span className="hidden sm:inline">Powrót</span>
               </button>
               <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
                 <MessageSquare className="h-6 w-6 text-white" />
@@ -483,15 +483,15 @@ export default function StudentGroupChatsPage() {
       </div>
 
       {/* Chat Container - STAŁA WYSOKOŚĆ z overflow hidden */}
-      <div className="grid lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+      <div className="grid lg:grid-cols-3 gap-2 sm:gap-6 flex-1 min-h-0 overflow-hidden w-full max-w-full">
         {/* Modern Chats List */}
-        <div className="lg:col-span-1">
-          <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-xl h-full overflow-hidden flex flex-col">
+        <div className="lg:col-span-1 min-h-0 flex flex-col w-full max-w-full">
+          <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-xl h-full overflow-hidden flex flex-col w-full max-w-full">
             <div className="p-6 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border-b border-white/10 flex-shrink-0">
               <h3 className="font-bold text-gray-900 text-lg">Twoje czaty</h3>
               <p className="text-sm text-gray-600 mt-1">{chats.length} aktywnych rozmów</p>
             </div>
-            <div className="overflow-y-auto flex-1 min-h-0">
+            <div className="overflow-y-auto flex-1 min-h-0 -webkit-overflow-scrolling-touch" style={{ WebkitOverflowScrolling: 'touch', maxHeight: '100%' }}>
               {chats.length === 0 ? (
                 <div className="p-8 text-center">
                   <div className="w-20 h-20 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -501,12 +501,12 @@ export default function StudentGroupChatsPage() {
                   <p className="text-sm text-gray-500">Nauczyciel może dodać Cię do czatu</p>
                 </div>
               ) : (
-                <div className="p-2">
+                <div className="p-2 space-y-2">
                   {chats.map((chat) => (
                     <div
                       key={chat.id}
                       onClick={() => setSelectedChat(chat)}
-                      className={`p-4 m-2 rounded-xl cursor-pointer transition-all duration-200 hover:shadow-lg ${
+                      className={`p-4 rounded-xl cursor-pointer transition-all duration-200 hover:shadow-lg ${
                         selectedChat?.id === chat.id 
                           ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg transform scale-[1.02]' 
                           : 'bg-white/50 hover:bg-white/80 border border-gray-100'
@@ -564,11 +564,11 @@ export default function StudentGroupChatsPage() {
         </div>
 
         {/* Modern Chat Area */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 w-full max-w-full min-w-0">
           {selectedChat ? (
-            <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-xl h-full flex flex-col overflow-hidden">
+            <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-xl h-full flex flex-col overflow-hidden w-full max-w-full">
               {/* Modern Chat Header */}
-              <div className="p-6 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border-b border-white/10 flex-shrink-0">
+              <div className="p-3 sm:p-6 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border-b border-white/10 flex-shrink-0 w-full max-w-full">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full flex items-center justify-center">
@@ -637,9 +637,9 @@ export default function StudentGroupChatsPage() {
               </div>
 
               {/* Content Area - STAŁA WYSOKOŚĆ z scrollowaniem w środku */}
-              <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-b from-transparent to-blue-50/30 min-h-0 max-h-[calc(100vh-435px)]">
+              <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-gradient-to-b from-transparent to-blue-50/30 min-h-0 max-h-[calc(100vh-435px)] w-full max-w-full">
                 {activeTab === 'messages' ? (
-                  <div className="space-y-4">
+                  <div className="space-y-4 w-full">
                     {messages.length === 0 ? (
                       <div className="text-center text-gray-500 py-8">
                         <p>Brak wiadomości w tym czacie</p>
@@ -649,13 +649,8 @@ export default function StudentGroupChatsPage() {
                       messages.map((message) => {
                         console.log('Renderuję wiadomość:', message);
                         return (
-                          <div key={message.id} className={`flex ${message.senderId === user?.uid ? 'justify-end' : 'justify-start'}`}>
-      {/* Theme Toggle */}
-      <div className="absolute top-4 right-4 z-50">
-        <ThemeToggle />
-      </div>
-
-                            <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl ${
+                          <div key={message.id} className={`flex ${message.senderId === user?.uid ? 'justify-end' : 'justify-start'} w-full`}>
+                            <div className={`max-w-[85%] sm:max-w-xs lg:max-w-md px-3 sm:px-4 py-2 sm:py-3 rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl ${
                               message.senderId === user?.uid
                                 ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white' 
                                 : 'bg-white border border-gray-100 text-gray-900'
@@ -777,41 +772,45 @@ export default function StudentGroupChatsPage() {
               </div>
 
               {/* Modern Message Input - stała wysokość */}
-              <form onSubmit={handleSendMessage} className="p-6 bg-white/50 backdrop-blur-sm border-t border-white/20 flex-shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 relative">
+              <form onSubmit={handleSendMessage} className="p-3 sm:p-6 bg-white/50 backdrop-blur-sm border-t border-white/20 flex-shrink-0 w-full max-w-full">
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap w-full">
+                  <div className="flex-1 relative min-w-0 w-full sm:w-auto">
                     <input
                       type="text"
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
                       placeholder="Napisz wiadomość..."
                       disabled={sending}
-                      className="w-full border-0 bg-white rounded-2xl px-6 py-4 shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:shadow-xl transition-all duration-200 disabled:opacity-50 text-gray-900 placeholder-gray-400"
+                      style={{ fontSize: '16px' }}
+                      className="w-full border-0 bg-white rounded-2xl px-3 sm:px-6 py-2 sm:py-4 shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:shadow-xl transition-all duration-200 disabled:opacity-50 text-gray-900 placeholder-gray-400"
                     />
                   </div>
-                  <div>
-                    <input
-                      type="file"
-                      onChange={handleFileChange}
-                      disabled={uploading || sending || !selectedChat}
-                      className="block text-sm"
-                    />
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="hidden sm:block">
+                      <input
+                        type="file"
+                        onChange={handleFileChange}
+                        disabled={uploading || sending || !selectedChat}
+                        className="block text-sm"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSendFile}
+                      disabled={uploading || !selectedFile || !selectedChat}
+                      className="bg-white text-blue-600 border border-blue-200 px-2 sm:px-4 py-2 sm:py-3 rounded-2xl hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm whitespace-nowrap"
+                    >
+                      {uploading ? `${uploadProgress}%` : <span className="hidden sm:inline">Wyślij plik</span>}
+                      {uploading ? null : <span className="sm:hidden">Plik</span>}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={sending || !newMessage.trim()}
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-2 sm:p-4 rounded-2xl hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg min-w-[44px] min-h-[44px] flex items-center justify-center"
+                    >
+                      <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSendFile}
-                    disabled={uploading || !selectedFile || !selectedChat}
-                    className="bg-white text-blue-600 border border-blue-200 px-4 py-3 rounded-2xl hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {uploading ? `Wysyłanie... ${uploadProgress}%` : 'Wyślij plik'}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={sending || !newMessage.trim()}
-                    className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-4 rounded-2xl hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-                  >
-                    <Send className="h-5 w-5" />
-                  </button>
                 </div>
               </form>
             </div>

@@ -1,6 +1,6 @@
 export default function TeacherMaterials() {
   return (
-    <div className="max-w-2xl mx-auto py-4 sm:py-6 lg:py-8 px-3 sm:px-4 lg:px-6">
+    <div className="max-w-2xl mx-auto py-4 sm:py-6 lg:py-8 px-3 sm:px-4 lg:px-6 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold mb-3 sm:mb-4">Materiały</h1>
       <div className="bg-white rounded-lg shadow p-4 sm:p-6 mb-4 sm:mb-6">
         <h2 className="text-base sm:text-lg font-semibold mb-2">Lista materiałów</h2>

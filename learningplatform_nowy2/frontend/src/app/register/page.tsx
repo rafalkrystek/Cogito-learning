@@ -110,7 +110,7 @@ function RegisterPageContent() {
   };
 
   return (
-    <div className="flex min-h-screen w-full overflow-hidden">
+    <div className="flex min-h-screen w-full overflow-hidden overflow-x-hidden max-w-full" style={{ maxWidth: '100vw' }}>
       {notification && (
         <Suspense fallback={null}>
           <Notification 

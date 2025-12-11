@@ -987,7 +987,7 @@ function Dashboard() {
         </div>
       )}
 
-      <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 overflow-x-hidden w-full max-w-full" style={{ maxWidth: '100vw' }}>
         {/* Mobile menu button */}
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1053,7 +1053,7 @@ function Dashboard() {
       <main className="flex-1 flex flex-col w-full lg:w-auto bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200">
         {/* Header */}
         <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 lg:px-8 py-4 sm:py-6 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-white/20 dark:border-gray-700/50 shadow-sm relative gap-3 sm:gap-4 transition-colors duration-200">
-          <div className="relative w-full sm:w-[45%] md:w-[40%] lg:w-1/3" ref={searchRef}>
+          <div className="relative w-full sm:w-[45%] md:w-[40%] lg:w-1/3 pl-12 sm:pl-0" ref={searchRef}>
             <div className="flex">
               <input
                 type="text"

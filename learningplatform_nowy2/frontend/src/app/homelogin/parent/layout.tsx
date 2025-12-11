@@ -815,7 +815,7 @@ export default function ParentLayout({
 
   return (
     <ParentRoute>
-      <div className="flex min-h-screen bg-gray-50">
+      <div className="flex min-h-screen bg-gray-50 overflow-x-hidden w-full max-w-full">
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 shadow-sm">
         <div className="flex flex-col flex-1">
@@ -862,7 +862,12 @@ export default function ParentLayout({
           </nav>
 
           {/* Bottom Actions */}
-          <div className="p-4 border-t border-gray-200 space-y-2">
+          <div 
+            className="p-4 border-t border-gray-200 space-y-2"
+            style={{ 
+              paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+            }}
+          >
             <button 
               onClick={() => handleNavigation('/homelogin/parent/settings')}
               className={`w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg transition-colors ${
@@ -951,7 +956,12 @@ export default function ParentLayout({
               </nav>
 
               {/* Mobile Bottom Actions */}
-              <div className="p-4 border-t border-gray-200 space-y-2">
+              <div 
+                className="p-4 border-t border-gray-200 space-y-2"
+                style={{ 
+                  paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))'
+                }}
+              >
                 <button 
                   onClick={() => handleNavigation('/homelogin/parent/settings')}
                   className={`w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg transition-colors ${
@@ -1111,7 +1121,7 @@ export default function ParentLayout({
         </header>
 
         {/* Page Content */}
-        <main className="p-6">
+        <main className="p-6 overflow-x-hidden w-full max-w-full">
           {children}
         </main>
         </div>

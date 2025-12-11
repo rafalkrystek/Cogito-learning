@@ -1824,12 +1824,12 @@ function TeacherCourseDetailContent() {
 
   // Add loading and auth checks at the top
   if (authLoading || !user) {
-    return <div className="p-8 text-center text-lg text-gray-500">Ładowanie danych użytkownika...</div>;
+    return <div className="p-8 text-center text-lg text-gray-500 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>Ładowanie danych użytkownika...</div>;
   }
 
-  if (loading) return <div className="p-8">Ładowanie...</div>;
-  if (error) return <div className="p-8 text-red-500">{error}</div>;
-  if (!course) return <div className="p-8">Nie znaleziono kursu.</div>;
+  if (loading) return <div className="p-8 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>Ładowanie...</div>;
+  if (error) return <div className="p-8 text-red-500 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>{error}</div>;
+  if (!course) return <div className="p-8 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>Nie znaleziono kursu.</div>;
 
   // Funkcje do zarządzania trybem uporządkowania
   const handleStartReorder = () => {
@@ -1974,7 +1974,7 @@ function TeacherCourseDetailContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
       <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
@@ -1983,7 +1983,7 @@ function TeacherCourseDetailContent() {
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
           </button>
 
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -2090,15 +2090,6 @@ function TeacherCourseDetailContent() {
             </button>
           </div>
           
-          {showIconPicker && (
-            <div className="mt-4 relative z-50 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-500 dark:border-blue-400 shadow-2xl">
-              <CourseIconPicker
-                selectedIconUrl={iconUrl}
-                onIconSelect={handleIconChange}
-                label="Wybierz ikonę kursu"
-              />
-            </div>
-          )}
         </div>
         <div className="hidden sm:block h-full">
           {bannerUrl ? (
@@ -2109,8 +2100,19 @@ function TeacherCourseDetailContent() {
         </div>
       </div>
 
+      {/* Picker ikon - poza bannerem, aby nie przysłaniał przycisków */}
+      {showIconPicker && (
+        <div className="w-full mb-4 relative z-40 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-500 dark:border-blue-400 shadow-2xl">
+          <CourseIconPicker
+            selectedIconUrl={iconUrl}
+            onIconSelect={handleIconChange}
+            label="Wybierz ikonę kursu"
+          />
+        </div>
+      )}
+
       {/* DODAJ SEKCJĘ I UPORZĄDKUJ */}
-      <div className="w-full mb-4 flex justify-end gap-3">
+      <div className="w-full mb-4 flex justify-end gap-3 relative z-50">
         {!isReorderMode ? (
           <>
             <button

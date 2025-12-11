@@ -199,7 +199,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   return (
     <StudentRoute>
       <ParentAccess>
-        <div className="min-h-screen bg-[#F4F6FB] dark:bg-gray-900 flex flex-col transition-colors duration-200">
+        <div className="min-h-screen bg-[#F4F6FB] dark:bg-gray-900 flex flex-col transition-colors duration-200 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
           {/* Minimalist Topbar */}
           <header className="w-full bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex items-center justify-between px-8 py-1 sticky top-0 z-50 h-14">
             {/* Logo and Dashboard link on the left */}
@@ -401,7 +401,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
               </div>
             </div>
           </header>
-          <main className="flex-1 w-full max-w-full mx-auto">
+          <main className="flex-1 w-full max-w-full mx-auto overflow-x-hidden">
             <ErrorBoundary>
               {children}
             </ErrorBoundary>

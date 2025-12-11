@@ -453,14 +453,14 @@ export default function GroupChatsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div className="flex items-center justify-center min-h-64 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen space-y-6 flex flex-col overflow-hidden">
+    <div className="h-screen space-y-6 flex flex-col overflow-hidden w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
       <div className="flex justify-between items-center flex-shrink-0">
         <div>
@@ -638,7 +638,7 @@ export default function GroupChatsPage() {
             <div className="p-4 border-b border-gray-200 flex-shrink-0">
               <h3 className="font-semibold text-gray-900">Twoje czaty ({chats.length})</h3>
             </div>
-            <div className="overflow-y-auto flex-1 min-h-0">
+            <div className="overflow-y-auto flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', maxHeight: '100%' }}>
               {chats.length === 0 ? (
                 <div className="p-4 text-center text-gray-500">
                   <MessageSquare className="h-12 w-12 mx-auto mb-3 text-gray-300" />
@@ -646,7 +646,8 @@ export default function GroupChatsPage() {
                   <p className="text-sm">Utwórz swój pierwszy czat!</p>
                 </div>
               ) : (
-                chats.map((chat) => (
+                <div className="space-y-2 p-2">
+                  {chats.map((chat) => (
                   <div
                     key={chat.id}
                     onClick={() => setSelectedChat(chat)}
@@ -677,7 +678,8 @@ export default function GroupChatsPage() {
                       </>
                     )}
                   </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
           </div>

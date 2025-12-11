@@ -350,7 +350,7 @@ export default function ParentGrades() {
   const electiveSubjectsCount = electiveCourses.length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header - pełna szerokość */}
       <div className="w-full bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">

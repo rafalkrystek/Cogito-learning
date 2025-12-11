@@ -175,7 +175,7 @@ function LoginPageContent() {
   };
 
   return (
-    <div className="flex min-h-screen w-full overflow-hidden">
+    <div className="flex min-h-screen w-full overflow-x-hidden" style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
       {notification && (
         <Suspense fallback={null}>
           <Notification 
@@ -191,7 +191,11 @@ function LoginPageContent() {
         initial={{ opacity: 0, x: -50 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.6 }}
-        className="flex flex-col justify-center items-center w-full lg:w-1/2 min-h-screen bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/50 py-8 px-4 sm:px-6 lg:px-12 relative"
+        className="flex flex-col justify-center items-center w-full lg:w-1/2 min-h-screen bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/50 py-8 px-4 sm:px-6 lg:px-12 relative overflow-x-hidden"
+        style={{ 
+          maxWidth: '100%',
+          overflowX: 'hidden'
+        }}
       >
         {/* Logo */}
         <div 
@@ -220,6 +224,11 @@ function LoginPageContent() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.2 }}
           className="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 p-8 sm:p-10"
+          style={{ 
+            width: '100%',
+            maxWidth: '28rem',
+            boxSizing: 'border-box'
+          }}
         >
           {/* Icon */}
           <motion.div 

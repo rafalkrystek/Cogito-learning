@@ -107,7 +107,7 @@ function StudentQuizzesPageContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F4F6FB] flex items-center justify-center">
+      <div className="min-h-screen bg-[#F4F6FB] flex items-center justify-center w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#4067EC] border-t-transparent mx-auto mb-4"></div>
           <p className="text-gray-600">Ładowanie quizów...</p>
@@ -118,7 +118,7 @@ function StudentQuizzesPageContent() {
 
   if (selectedQuiz) {
     return (
-      <div className="min-h-screen bg-[#F4F6FB] p-4">
+      <div className="min-h-screen bg-[#F4F6FB] p-4 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="max-w-4xl mx-auto">
           <button
             onClick={() => setSelectedQuiz(null)}
@@ -133,7 +133,7 @@ function StudentQuizzesPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
       <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
@@ -142,7 +142,7 @@ function StudentQuizzesPageContent() {
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
           </button>
           
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">

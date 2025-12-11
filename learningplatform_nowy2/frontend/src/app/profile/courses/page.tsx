@@ -84,7 +84,7 @@ export default function CoursesPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 relative">
+    <div className="container mx-auto px-4 py-8 relative w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Theme Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <ThemeToggle />

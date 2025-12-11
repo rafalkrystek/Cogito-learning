@@ -64,7 +64,7 @@ export default function DebugPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-4 py-8 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <h1 className="text-3xl font-bold mb-8">Debug - Przypisania kursów</h1>
 
       {error && (

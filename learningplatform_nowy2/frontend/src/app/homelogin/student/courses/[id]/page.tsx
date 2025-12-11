@@ -369,7 +369,7 @@ function StudentCourseDetailContent() {
 
   if (authLoading || loading) {
   return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Ładowanie kursu...</p>
@@ -380,7 +380,7 @@ function StudentCourseDetailContent() {
 
   if (error) {
                                         return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="bg-white rounded-xl shadow-lg p-8 max-w-md text-center">
           <div className="text-red-500 text-6xl mb-4">⚠️</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Błąd</h2>
@@ -390,7 +390,7 @@ function StudentCourseDetailContent() {
             className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
-            Powrót
+            <span className="hidden sm:inline">Powrót</span>
                                                         </button>
         </div>
       </div>

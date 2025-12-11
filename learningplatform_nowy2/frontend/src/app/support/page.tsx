@@ -4,7 +4,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 
 export default function SupportPage() {
   return (
-    <div className="min-h-screen bg-[#F1F4FE] flex flex-col relative">
+    <div className="min-h-screen bg-[#F1F4FE] flex flex-col relative w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Theme Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <ThemeToggle />

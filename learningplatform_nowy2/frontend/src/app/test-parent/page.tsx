@@ -10,7 +10,7 @@ export default function TestParent() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-8 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <h1 className="text-2xl font-bold mb-4">Test Strony Rodzica</h1>
       
       <div className="bg-white p-6 rounded-lg shadow">

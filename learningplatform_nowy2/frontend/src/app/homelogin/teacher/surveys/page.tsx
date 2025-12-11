@@ -610,7 +610,7 @@ export default function TeacherSurveysPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
@@ -618,7 +618,7 @@ export default function TeacherSurveysPage() {
 
   if (showSurveyEditor) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <SurveyEditor
           survey={editingSurvey || undefined}
           onSave={(survey) => {
@@ -635,7 +635,7 @@ export default function TeacherSurveysPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -645,7 +645,7 @@ export default function TeacherSurveysPage() {
               className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
               <ArrowLeft className="w-5 h-5" />
-              Powrót
+              <span className="hidden sm:inline">Powrót</span>
             </button>
             
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">

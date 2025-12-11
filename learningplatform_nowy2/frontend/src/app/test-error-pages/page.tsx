@@ -64,7 +64,7 @@ export default function TestErrorPages() {
         );
       default:
         return (
-          <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+          <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
             <div className="max-w-4xl mx-auto text-center">
               <h1 className="text-4xl font-bold text-gray-900 mb-8">
                 🧪 Test Komponentów Błędów
@@ -146,7 +146,7 @@ export default function TestErrorPages() {
   };
 
   return (
-    <div>
+    <div className="w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {activeComponent !== 'menu' && (
         <div className="fixed top-4 left-4 z-50">
           <button

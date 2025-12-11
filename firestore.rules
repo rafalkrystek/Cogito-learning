@@ -2,237 +2,243 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Użytkownicy mogą czytać i zapisywać swoje własne dane
+
+    // --- FUNKCJE POMOCNICZE (Dla bezpieczeństwa i porządku) ---
+    
+    // Sprawdza czy użytkownik jest zalogowany
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Sprawdza czy to konkretny użytkownik (właściciel danych)
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Sprawdza role (wymaga Custom Claims w Firebase Auth!)
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+    
+    function isAdmin() {
+      return hasRole('admin');
+    }
+    
+    function isTeacher() {
+      return hasRole('teacher');
+    }
+    
+    function isParent() {
+      return hasRole('parent');
+    }
+    
+    function isStudent() {
+      return hasRole('student');
+    }
+
+    // --- REGUŁY WŁAŚCIWE ---
+
+    // 1. UŻYTKOWNICY
     match /users/{userId} {
-      allow read, write: if request.auth != null && (request.auth.uid == userId || request.auth.token.role == 'admin');
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) || isAdmin(); 
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
     }
-    
-    // Administratorzy mogą czytać i zapisywać wszystkie dane użytkowników
-    match /users/{document=**} {
-      allow read, write: if request.auth != null && request.auth.token.role == 'admin';
-    }
-    
-    // Kursy - nauczyciele mogą zarządzać swoimi kursami
+
+    // 2. KURSY - wszyscy zalogowani mogą czytać (filtrowanie po stronie klienta)
     match /courses/{courseId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
     }
-    
-    // Quizy - nauczyciele mogą zarządzać quizami
+
+    // 3. MODUŁY - wszyscy zalogowani mogą czytać (filtrowanie po stronie klienta)
+    match /modules/{moduleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    // 4. LEKCJE - wszyscy zalogowani mogą czytać (filtrowanie po stronie klienta)
+    match /lessons/{lessonId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    // 5. POSTĘP UCZNIA - WAŻNE: dla query z where() musimy pozwolić na czytanie
+    match /progress/{progressId} {
+      // Dla query z where('studentId', '==', X) - pozwól wszystkim zalogowanym
+      // Szczegółowa weryfikacja relacji parent-student jest w kodzie aplikacji
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        request.resource.data.studentId == request.auth.uid || 
+        request.resource.data.user_id == request.auth.uid
+      );
+      allow update: if isSignedIn() && (
+        (resource.data.studentId == request.auth.uid || resource.data.user_id == request.auth.uid) ||
+        isAdmin() || isTeacher()
+      );
+      allow delete: if isAdmin() || isTeacher();
+    }
+
+    // 6. QUIZY - wszyscy zalogowani mogą czytać (filtrowanie po stronie klienta)
     match /quizzes/{quizId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
     }
-    
-    // Wyniki quizów - uczniowie mogą zapisywać swoje wyniki
+
+    // 7. WYNIKI QUIZÓW
     match /quiz_results/{resultId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.user_id || 
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+      allow read: if isSignedIn() && (
+        resource.data.user_id == request.auth.uid || 
+        isAdmin() || 
+        isTeacher() ||
+        (isParent() && resource.data.user_id != null)
       );
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if request.auth != null && (
-        request.auth.uid == resource.data.user_id || 
-        request.auth.token.role == 'admin'
+      allow create: if isOwner(request.resource.data.user_id);
+      allow update, delete: if isSignedIn() && (
+        resource.data.user_id == request.auth.uid || 
+        isAdmin()
       );
     }
-    
-    // Próby quizów - uczniowie mogą zapisywać swoje próby
+
+    // 8. PRÓBY QUIZÓW
     match /quiz_attempts/{attemptId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.user_id || 
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+      allow read: if isSignedIn() && (
+        resource.data.user_id == request.auth.uid || 
+        isAdmin() || 
+        isTeacher() ||
+        (isParent() && resource.data.user_id != null)
       );
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if request.auth != null && (
-        request.auth.uid == resource.data.user_id || 
-        request.auth.token.role == 'admin'
+      allow create: if isOwner(request.resource.data.user_id);
+      allow update, delete: if isSignedIn() && (
+        resource.data.user_id == request.auth.uid || 
+        isAdmin()
       );
     }
-    
-    // Grupy - administratorzy i nauczyciele mogą zarządzać
+
+    // 9. GRUPY
     match /groups/{groupId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
     }
-    
-    // Czaty grupowe - uczestnicy mogą czytać i pisać
+
+    // 10. CZATY GRUPOWE
     match /groupChats/{chatId} {
-      allow read, write: if request.auth != null && (
+      allow read, write: if isSignedIn() && (
         request.auth.uid in resource.data.participants ||
-        request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'teacher'
+        isAdmin() ||
+        isTeacher()
       );
     }
-    
-    // Wiadomości w czatach grupowych - uczestnicy mogą czytać i pisać
+
+    // 11. WIADOMOŚCI W CZATACH
     match /groupChats/{chatId}/messages/{messageId} {
-      allow read, write: if request.auth != null && (
+      allow read, write: if isSignedIn() && (
         request.auth.uid in get(/databases/$(database)/documents/groupChats/$(chatId)).data.participants ||
-        request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'teacher'
+        isAdmin() ||
+        isTeacher()
       );
     }
-    
-    // Oceny - nauczyciele mogą dodawać oceny, uczniowie mogą czytać swoje oceny
+
+    // 12. OCENY - WAŻNE: dla query z where() musimy pozwolić na czytanie
     match /grades/{gradeId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.studentId || 
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher' ||
-        request.auth.token.role == 'parent'
-      );
-      allow create: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
-      allow update, delete: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      // Dla query z where('studentId', '==', X) - pozwól wszystkim zalogowanym
+      // Szczegółowa weryfikacja relacji parent-student jest w kodzie aplikacji
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin() || isTeacher();
     }
-    
-    // Klasy - nauczyciele mogą tworzyć i zarządzać swoimi klasami
-    // PRIORYTET: jeśli teacher_id == uid (działa nawet bez roli w tokenie)
+
+    // 13. KLASY
     match /classes/{classId} {
-      // Wszyscy zalogowani mogą czytać klasy
-      allow read: if request.auth != null;
+      allow read: if isSignedIn();
       
-      // Tworzenie klasy - PRIORYTET: jeśli teacher_id == uid (działa nawet bez roli w tokenie)
-      // Alternatywnie: jeśli token ma rolę teacher/admin
-      allow create: if request.auth != null && (
-        // Główna reguła: teacher_id musi być równy uid użytkownika
+      allow create: if isSignedIn() && (
         request.resource.data.teacher_id == request.auth.uid ||
-        // Alternatywa: token ma rolę teacher lub admin
-        request.auth.token.role == 'teacher' || 
-        request.auth.token.role == 'admin'
+        isTeacher() || 
+        isAdmin()
       );
       
-      // Aktualizacja - tylko właściciel klasy lub admin
-      allow update: if request.auth != null && (
+      allow update: if isSignedIn() && (
         resource.data.teacher_id == request.auth.uid ||
-        request.auth.token.role == 'admin'
+        isAdmin() ||
+        (isTeacher() && (resource.data.teacher_id == '' || resource.data.teacher_id == null))
       );
       
-      // Usuwanie - tylko właściciel klasy lub admin
-      allow delete: if request.auth != null && (
+      allow delete: if isSignedIn() && (
         resource.data.teacher_id == request.auth.uid ||
-        request.auth.token.role == 'admin'
+        isAdmin()
       );
     }
-    
-    // Wydarzenia kalendarza - nauczyciele mogą tworzyć i zarządzać wydarzeniami
+
+    // 14. WYDARZENIA (Kalendarz)
     match /events/{eventId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
-      allow update, delete: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher' ||
-        request.auth.uid == resource.data.createdBy
-      );
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isTeacher();
+      allow update, delete: if isAdmin() || isTeacher() || (isSignedIn() && resource.data.createdBy == request.auth.uid);
     }
-    
-    // Powiadomienia - nauczyciele mogą tworzyć, użytkownicy mogą czytać swoje
-    // Rodzice mogą czytać i aktualizować powiadomienia (widzą tylko powiadomienia swoich dzieci - filtrowane w kodzie)
+
+    // 15. POWIADOMIENIA - WAŻNE: dla query z where() musimy pozwolić na czytanie
     match /notifications/{notificationId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.user_id || 
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher' ||
-        request.auth.token.role == 'parent'
+      // Dla query z where('user_id', '==', X) - pozwól wszystkim zalogowanym
+      // Szczegółowa weryfikacja relacji parent-student jest w kodzie aplikacji
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isSignedIn() && (
+        resource.data.user_id == request.auth.uid ||
+        (isParent() && resource.data.user_id != null)
       );
-      allow create: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
-      allow update: if request.auth != null && (
-        request.auth.uid == resource.data.user_id ||
-        request.auth.token.role == 'parent'
-      );
-      allow delete: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow delete: if isAdmin() || isTeacher();
     }
-    
-    // Sesje użytkowników - użytkownicy mogą zarządzać tylko swoimi sesjami
+
+    // 16. SESJE i CZAS NAUKI (User Specific)
     match /userSessions/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
     }
     
-    // Czas nauki użytkowników - użytkownicy mogą zarządzać tylko swoim czasem
     match /userLearningTime/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      // Nauczyciele i admini mogą czytać wszystkie dane
-      allow read: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow write: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin() || isTeacher();
     }
-    
-    // Wiadomości - użytkownicy mogą czytać i pisać wiadomości, gdzie są nadawcą lub odbiorcą
+
+    // 17. WIADOMOŚCI PRYWATNE
     match /messages/{messageId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.from || 
-        request.auth.uid == resource.data.to ||
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher' ||
-        request.auth.token.role == 'parent'
+      allow read: if isSignedIn() && (
+        resource.data.from == request.auth.uid || 
+        resource.data.to == request.auth.uid ||
+        isAdmin() || 
+        isTeacher() ||
+        isParent()
       );
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.from;
-      allow update: if request.auth != null && (
-        request.auth.uid == resource.data.from ||
-        request.auth.uid == resource.data.to ||
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher' ||
-        request.auth.token.role == 'parent'
+      allow create: if isOwner(request.resource.data.from);
+      allow update: if isSignedIn() && (
+        resource.data.from == request.auth.uid ||
+        resource.data.to == request.auth.uid ||
+        isAdmin() || 
+        isTeacher() ||
+        isParent()
       );
-      allow delete: if request.auth != null && (
-        request.auth.uid == resource.data.from ||
-        request.auth.token.role == 'admin'
+      allow delete: if isSignedIn() && (
+        resource.data.from == request.auth.uid ||
+        isAdmin()
       );
     }
-    
-    // Relacje rodzic-uczeń - rodzice mogą czytać swoje relacje
+
+    // 18. RELACJE RODZIC-UCZEŃ - BEZPIECZNE: tylko właściciel relacji
     match /parent_students/{documentId} {
-      allow read: if request.auth != null && (
-        request.auth.uid == resource.data.parent ||
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
+      allow read: if isSignedIn() && (
+        resource.data.parent == request.auth.uid ||
+        isAdmin() || 
+        isTeacher()
       );
-      allow create: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
-      allow update, delete: if request.auth != null && (
-        request.auth.token.role == 'admin' || 
-        request.auth.token.role == 'teacher'
-      );
+      allow write: if isAdmin() || isTeacher();
     }
-    
-    // Status przeczytanych powiadomień - użytkownicy mogą zarządzać tylko swoim statusem
+
+    // 19. STATUSY POWIADOMIEŃ
     match /notification_read_status/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
     }
-    
-    // Domyślnie - tylko zalogowani użytkownicy mogą czytać
-    match /{document=**} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.role == 'admin';
-    }
+
+    // --- BLOKADA RESZTY ---
+    // Wszystko inne jest automatycznie zablokowane
   }
 }

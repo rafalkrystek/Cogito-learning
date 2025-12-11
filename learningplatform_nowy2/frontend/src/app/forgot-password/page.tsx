@@ -30,7 +30,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#e3eafe] to-[#f5f7ff] relative">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#e3eafe] to-[#f5f7ff] relative w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Theme Toggle */}
       <div className="absolute top-4 right-4 z-20">
         <ThemeToggle />

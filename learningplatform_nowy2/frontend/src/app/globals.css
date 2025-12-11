@@ -735,6 +735,56 @@ a:hover, .link:hover {
   border: none !important;
   width: 14.2857% !important;
   text-align: center !important;
+  overflow: visible !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+}
+
+/* Mobile - mniejsze nagłówki dni */
+/* Małe telefony (< 375px) */
+@media (max-width: 374px) {
+  .fc .fc-col-header-cell {
+    font-size: 0.65rem !important;
+    padding: 3px 1px !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+  }
+  
+  .fc .fc-col-header-cell-cushion {
+    padding: 3px 1px !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    text-align: center !important;
+  }
+}
+
+/* Standardowe telefony i małe tablety (375px - 768px) */
+@media (max-width: 768px) {
+  .fc .fc-col-header-cell {
+    font-size: 0.7rem !important;
+    padding: 4px 2px !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+  }
+  
+  .fc .fc-col-header-cell-cushion {
+    padding: 4px 2px !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    text-align: center !important;
+  }
+}
+
+/* Tablety w orientacji pionowej (768px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .fc .fc-col-header-cell {
+    font-size: 0.85rem !important;
+    padding: 6px 4px !important;
+  }
 }
 .fc .fc-toolbar-title {
   font-size: 1.2rem !important;
@@ -794,6 +844,21 @@ a:hover, .link:hover {
 }
 .fc .fc-col-header {
   width: 100% !important;
+  overflow: visible !important;
+}
+
+/* Widok dnia - upewnij się, że nagłówek nie jest ucięty */
+.fc-timeGridDay-view .fc-scrollgrid-section-header {
+  overflow: visible !important;
+}
+
+.fc-timeGridDay-view .fc-scrollgrid-sync-table {
+  table-layout: auto !important;
+}
+
+.fc-timeGridDay-view th {
+  overflow: visible !important;
+  white-space: normal !important;
 }
 .fc .fc-daygrid-body {
   width: 100% !important;
@@ -807,6 +872,38 @@ a:hover, .link:hover {
   padding: 4px !important;
   border: none !important;
 }
+
+/* Mobile - mniejsze kafelki */
+/* Małe telefony (< 375px) */
+@media (max-width: 374px) {
+  .fc .fc-daygrid-day {
+    height: 65px !important;
+    min-height: 65px !important;
+    max-height: 65px !important;
+    padding: 1px !important;
+  }
+}
+
+/* Standardowe telefony (375px - 768px) */
+@media (max-width: 768px) {
+  .fc .fc-daygrid-day {
+    height: 75px !important;
+    min-height: 75px !important;
+    max-height: 75px !important;
+    padding: 2px !important;
+  }
+}
+
+/* Tablety w orientacji pionowej (768px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .fc .fc-daygrid-day {
+    height: 100px !important;
+    min-height: 100px !important;
+    max-height: 100px !important;
+    padding: 3px !important;
+  }
+}
+
 .fc .fc-daygrid-day-frame {
   height: 132px !important;
   min-height: 132px !important;
@@ -822,6 +919,16 @@ a:hover, .link:hover {
   position: relative !important;
   box-sizing: border-box !important;
   box-shadow: var(--shadow-sm) !important;
+}
+
+/* Mobile - mniejsze ramki */
+@media (max-width: 768px) {
+  .fc .fc-daygrid-day-frame {
+    height: 70px !important;
+    min-height: 70px !important;
+    max-height: 70px !important;
+    border-radius: 8px !important;
+  }
 }
 .fc .fc-daygrid-day-frame:hover {
   background: var(--card-hover) !important;
@@ -847,6 +954,16 @@ a:hover, .link:hover {
   flex-shrink: 0 !important;
   position: relative !important;
 }
+
+/* Mobile - mniejszy top */
+@media (max-width: 768px) {
+  .fc .fc-daygrid-day-top {
+    height: 20px !important;
+    min-height: 20px !important;
+    max-height: 20px !important;
+  }
+}
+
 .fc .fc-daygrid-day-bottom {
   height: 105px !important;
   min-height: 105px !important;
@@ -856,6 +973,16 @@ a:hover, .link:hover {
   display: flex !important;
   flex-direction: column !important;
 }
+
+/* Mobile - mniejszy bottom */
+@media (max-width: 768px) {
+  .fc .fc-daygrid-day-bottom {
+    height: 50px !important;
+    min-height: 50px !important;
+    max-height: 50px !important;
+  }
+}
+
 .fc .fc-daygrid-day-number {
   height: 35px !important;
   min-height: 35px !important;
@@ -866,6 +993,17 @@ a:hover, .link:hover {
   font-size: 1rem !important;
   font-weight: 600 !important;
   padding: 4px !important;
+}
+
+/* Mobile - mniejszy numer dnia */
+@media (max-width: 768px) {
+  .fc .fc-daygrid-day-number {
+    height: 20px !important;
+    min-height: 20px !important;
+    max-height: 20px !important;
+    font-size: 0.75rem !important;
+    padding: 2px !important;
+  }
 }
 .fc .fc-daygrid-day-frame {
   display: flex !important;
@@ -908,6 +1046,29 @@ a:hover, .link:hover {
   line-height: 1.2;
 }
 
+/* Mobile - mniejsze wydarzenia */
+@media (max-width: 768px) {
+  .event-title {
+    font-size: 0.6rem !important;
+    line-height: 1 !important;
+  }
+  
+  .event-indicator {
+    padding: 1px 2px !important;
+    gap: 2px !important;
+  }
+  
+  .event-dot {
+    width: 4px !important;
+    height: 4px !important;
+  }
+  
+  .fc .fc-daygrid-day-events {
+    padding: 2px !important;
+    gap: 1px !important;
+  }
+}
+
 /* Event title w dark mode - jasny tekst */
 .dark .event-title {
   color: var(--text-primary) !important;
@@ -932,11 +1093,26 @@ a:hover, .link:hover {
   justify-content: flex-end;
   padding: 4px 8px 4px 36px;
 }
+
+/* Mobile - mniejszy wrapper */
+@media (max-width: 768px) {
+  .day-cell-wrapper {
+    padding: 2px 4px 2px 24px !important;
+  }
+}
+
 .day-cell-wrapper .day-number {
   font-size: 1rem;
   font-weight: 600;
   color: #374151;
   text-align: right;
+}
+
+/* Mobile - mniejszy numer */
+@media (max-width: 768px) {
+  .day-cell-wrapper .day-number {
+    font-size: 0.75rem !important;
+  }
 }
 
 /* Day number w dark mode */
@@ -966,6 +1142,22 @@ a:hover, .link:hover {
   z-index: 100 !important;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15) !important;
 }
+
+/* Mobile - mniejszy przycisk dodawania */
+@media (max-width: 768px) {
+  .add-event-btn {
+    width: 20px !important;
+    height: 20px !important;
+    top: 2px !important;
+    left: 2px !important;
+    border-radius: 4px !important;
+  }
+  
+  .add-event-btn svg {
+    width: 12px !important;
+    height: 12px !important;
+  }
+}
 .add-event-btn:hover {
   opacity: 1 !important;
   transform: scale(1.1) !important;
@@ -983,6 +1175,29 @@ a:hover, .link:hover {
 .fc .fc-toolbar {
   margin-bottom: 1.5rem;
 }
+
+/* Mobile - mniejszy toolbar */
+@media (max-width: 768px) {
+  .fc .fc-toolbar {
+    margin-bottom: 1rem !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
+  }
+  
+  .fc .fc-toolbar-title {
+    font-size: 0.9rem !important;
+  }
+  
+  .fc .fc-button {
+    font-size: 0.7rem !important;
+    padding: 4px 8px !important;
+  }
+  
+  .fc .fc-toolbar-chunk {
+    gap: 0.25rem !important;
+  }
+}
+
 .fc .fc-toolbar-chunk {
   display: flex;
   align-items: center;
@@ -995,12 +1210,33 @@ a:hover, .link:hover {
   min-height: 80px !important;
 }
 
+/* Mobile - mniejsze sloty czasowe */
+@media (max-width: 768px) {
+  .fc .fc-timegrid-slot {
+    height: 50px !important;
+    min-height: 50px !important;
+  }
+}
+
 .fc .fc-timegrid-slot-label {
   vertical-align: middle !important;
   padding: 0 8px !important;
   font-size: 0.875rem !important;
   color: #6b7280 !important;
   font-weight: 500 !important;
+}
+
+/* Mobile - mniejsze etykiety czasu */
+@media (max-width: 768px) {
+  .fc .fc-timegrid-slot-label {
+    padding: 0 4px !important;
+    font-size: 0.7rem !important;
+  }
+  
+  .fc .fc-timegrid-axis {
+    width: 50px !important;
+    min-width: 50px !important;
+  }
 }
 
 .fc .fc-timegrid-event {
@@ -1046,6 +1282,57 @@ a:hover, .link:hover {
   min-width: 600px !important;
   border-left: none !important;
   border-right: none !important;
+  overflow: visible !important;
+}
+
+/* Widok dnia - kolumna nagłówka */
+.fc-timeGridDay-view .fc-col-header {
+  overflow: visible !important;
+}
+
+.fc-timeGridDay-view .fc-scrollgrid-section-header {
+  overflow: visible !important;
+}
+
+/* Mobile - widok dnia */
+/* Małe telefony (< 375px) */
+@media (max-width: 374px) {
+  .fc-timeGridDay-view .fc-timegrid-col {
+    min-width: 100% !important;
+    width: 100% !important;
+  }
+  
+  .fc-timeGridDay-view .fc-timegrid {
+    overflow-x: auto !important;
+  }
+  
+  .fc-timeGridDay-view .fc-scrollgrid {
+    min-width: 100% !important;
+  }
+}
+
+/* Standardowe telefony i małe tablety (375px - 768px) */
+@media (max-width: 768px) {
+  .fc-timeGridDay-view .fc-timegrid-col {
+    min-width: 100% !important;
+    width: 100% !important;
+  }
+  
+  .fc-timeGridDay-view .fc-timegrid {
+    overflow-x: auto !important;
+  }
+  
+  .fc-timeGridDay-view .fc-scrollgrid {
+    min-width: 100% !important;
+  }
+}
+
+/* Tablety w orientacji pionowej (768px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .fc-timeGridDay-view .fc-timegrid-col {
+    min-width: 100% !important;
+    width: 100% !important;
+  }
 }
 
 .fc-timeGridDay-view .fc-col-header-cell {
@@ -1054,14 +1341,53 @@ a:hover, .link:hover {
   font-weight: 700 !important;
   text-align: center !important;
   border-radius: 12px 12px 0 0 !important;
+  overflow: visible !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  min-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Mobile - mniejszy header w widoku dnia */
+@media (max-width: 768px) {
+  .fc-timeGridDay-view .fc-col-header-cell {
+    padding: 12px 12px !important;
+    font-size: 0.9rem !important;
+    text-align: center !important;
+    overflow: visible !important;
+    min-width: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  
+  .fc-timeGridDay-view .fc-col-header-cell .fc-col-header-cell-cushion {
+    padding: 4px 12px !important;
+    gap: 4px !important;
+    text-align: center !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
 }
 
 .fc-timeGridDay-view .fc-col-header-cell .fc-col-header-cell-cushion {
-  padding: 8px 0 !important;
+  padding: 8px 12px !important;
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
+  justify-content: center !important;
   gap: 8px !important;
+  text-align: center !important;
+  overflow: visible !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
 }
 
 /* Dzień jako święto w widoku dnia */
@@ -1106,6 +1432,21 @@ a:hover, .link:hover {
   transition: all 0.2s ease !important;
 }
 
+/* Mobile - mniejsze wydarzenia w widoku dnia */
+@media (max-width: 768px) {
+  .fc-timeGridDay-view .fc-timegrid-event {
+    border-radius: 6px !important;
+    border-left-width: 3px !important;
+    padding: 6px 8px !important;
+    font-size: 0.75rem !important;
+  }
+  
+  .fc .fc-timegrid-event {
+    padding: 4px 6px !important;
+    font-size: 0.7rem !important;
+  }
+}
+
 .fc-timeGridDay-view .fc-timegrid-event:hover {
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25) !important;
   filter: brightness(1.05) !important;
@@ -1120,6 +1461,18 @@ a:hover, .link:hover {
 
 .fc-timeGridDay-view .fc-scroller {
   overflow-x: hidden !important;
+}
+
+/* Mobile - poprawka przewijania w widoku dnia */
+@media (max-width: 768px) {
+  .fc-timeGridDay-view .fc-scroller {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  
+  .fc-timeGridDay-view .fc-timegrid-body {
+    min-width: 100% !important;
+  }
 }
 
 /* Obecny wskaźnik czasu - dla widoku dnia i tygodnia */

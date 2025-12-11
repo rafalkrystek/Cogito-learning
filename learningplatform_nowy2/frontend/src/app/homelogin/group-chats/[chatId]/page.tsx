@@ -132,22 +132,22 @@ export default function StudentGroupChatView() {
 
   if (!chatDetails) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex flex-col items-center justify-center w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <p className="text-gray-500 mb-4">Nie znaleziono czatu lub nie masz do niego dostępu.</p>
         <button 
           onClick={() => window.location.href = '/homelogin'}
           className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
         >
           <ArrowLeft className="w-5 h-5" />
-          Powrót
+          <span className="hidden sm:inline">Powrót</span>
         </button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4">
-      <div className="max-w-4xl mx-auto h-[calc(100vh-2rem)] flex flex-col bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-2 sm:p-4 overflow-x-hidden w-full max-w-full" style={{ maxWidth: '100vw' }}>
+      <div className="max-w-4xl mx-auto h-[calc(100vh-2rem)] flex flex-col bg-white/90 backdrop-blur-xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden w-full max-w-full">
         {/* Modern Header */}
         <div className="p-6 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border-b border-white/10">
           <div className="flex items-center gap-4">
@@ -177,7 +177,7 @@ export default function StudentGroupChatView() {
         </div>
 
         {/* Modern Messages */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gradient-to-b from-transparent to-blue-50/30">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 bg-gradient-to-b from-transparent to-blue-50/30 w-full max-w-full">
           {messages.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-20 h-20 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -202,8 +202,8 @@ export default function StudentGroupChatView() {
                     </div>
                   )}
                   
-                  <div className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl ${
+                  <div className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'} w-full`}>
+                    <div className={`max-w-[85%] sm:max-w-xs lg:max-w-md px-3 sm:px-4 py-2 sm:py-3 rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl ${
                       isCurrentUser
                         ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white' 
                         : 'bg-white border border-gray-100 text-gray-900'
@@ -229,9 +229,9 @@ export default function StudentGroupChatView() {
         </div>
 
         {/* Modern Message Input */}
-        <form onSubmit={handleSendMessage} className="p-6 bg-white/50 backdrop-blur-sm border-t border-white/20">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 relative">
+        <form onSubmit={handleSendMessage} className="p-3 sm:p-6 bg-white/50 backdrop-blur-sm border-t border-white/20 w-full max-w-full">
+          <div className="flex items-center gap-2 sm:gap-3 w-full">
+            <div className="flex-1 relative min-w-0">
               <input
                 type="text"
                 value={newMessage}
@@ -239,7 +239,7 @@ export default function StudentGroupChatView() {
                 placeholder="Napisz wiadomość..."
                 disabled={sending}
                 style={{ fontSize: '16px' }}
-                className="w-full border-0 bg-white rounded-2xl px-4 sm:px-6 py-3 sm:py-4 shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:shadow-xl transition-all duration-200 disabled:opacity-50 text-gray-900 placeholder-gray-400"
+                className="w-full border-0 bg-white rounded-2xl px-3 sm:px-6 py-2 sm:py-4 shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:shadow-xl transition-all duration-200 disabled:opacity-50 text-gray-900 placeholder-gray-400"
               />
             </div>
             <button

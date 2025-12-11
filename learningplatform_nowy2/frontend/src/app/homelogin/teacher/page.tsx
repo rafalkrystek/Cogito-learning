@@ -403,20 +403,20 @@ export default function TeacherDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div className="flex items-center justify-center min-h-64 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
-      <div className="text-center max-w-4xl mx-auto">
-        <h2 className="text-3xl font-bold mb-4 text-gray-900">
+      <div className="text-center max-w-4xl mx-auto px-4">
+        <h2 className="text-2xl sm:text-3xl font-bold mb-4 text-gray-900 pt-4 sm:pt-0">
           Witaj z powrotem, {(user as any)?.displayName || user?.email || 'Nauczycielu'}!
         </h2>
-        <p className="text-lg text-gray-600 mb-8">
+        <p className="text-base sm:text-lg text-gray-600 mb-8">
           {isAdmin ? 'Przegląd aktywności w systemie edukacyjnym' : 'Przegląd Twoich kursów i aktywności uczniów'}
         </p>
       </div>
@@ -552,7 +552,7 @@ export default function TeacherDashboard() {
         {/* Recent Activity */}
         <div className="lg:col-span-2">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Twoje ostatnie aktywności</h3>
                 <p className="text-sm text-gray-600">Co robiłeś w systemie - kursy, oceny, quizy, czat</p>
@@ -570,7 +570,7 @@ export default function TeacherDashboard() {
                     setLoading(false);
                   }
                 }}
-                className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1"
+                className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1 whitespace-nowrap"
               >
                 <Clock className="h-3 w-3" />
                 Odśwież
@@ -578,8 +578,8 @@ export default function TeacherDashboard() {
             </div>
             
             {/* Zakładki */}
-            <div className="px-6 py-3 border-b border-gray-200">
-              <div className="flex space-x-1 overflow-x-auto">
+            <div className="px-4 sm:px-6 py-3 border-b border-gray-200">
+              <div className="flex space-x-1 overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
                 {tabs.map((tab) => (
                   <button
                     key={tab.id}
@@ -609,8 +609,8 @@ export default function TeacherDashboard() {
               </div>
             </div>
             
-            <div className="p-6">
-              <div className="max-h-96 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+            <div className="p-4 sm:p-6">
+              <div className="overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100" style={{ WebkitOverflowScrolling: 'touch', maxHeight: 'calc(100vh - 250px)' }}>
                 {filteredActivities.length > 0 ? (
                   filteredActivities.map((activity) => {
                     const Icon = activity.icon;
@@ -619,11 +619,11 @@ export default function TeacherDashboard() {
                         <div className="p-2 bg-white rounded-lg border">
                           <Icon className="h-4 w-4 text-gray-600" />
                         </div>
-                        <div className="flex-1">
-                          <h4 className="font-medium text-gray-900">{activity.title}</h4>
-                          <p className="text-sm text-gray-600">{activity.description}</p>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-gray-900 break-words">{activity.title}</h4>
+                          <p className="text-sm text-gray-600 break-words">{activity.description}</p>
                           <div className="flex items-center gap-1 mt-1">
-                            <Clock className="h-3 w-3 text-gray-400" />
+                            <Clock className="h-3 w-3 text-gray-400 flex-shrink-0" />
                             <span className="text-xs text-gray-500">
                               {activity.timestamp}
                             </span>

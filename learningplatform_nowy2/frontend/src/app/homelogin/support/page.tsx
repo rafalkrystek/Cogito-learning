@@ -187,7 +187,7 @@ export default function FAQPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#F4F6FB] dark:bg-gray-900">
+    <div className="min-h-screen bg-[#F4F6FB] dark:bg-gray-900 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
       <div className="w-full bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm sticky top-0 z-50">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -197,7 +197,7 @@ export default function FAQPage() {
               className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
               <ArrowLeft className="w-5 h-5" />
-              Powrót
+              <span className="hidden sm:inline">Powrót</span>
             </button>
             
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">

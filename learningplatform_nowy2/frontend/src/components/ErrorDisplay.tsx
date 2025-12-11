@@ -90,7 +90,7 @@ export const ErrorDisplay: React.FC<ErrorDisplayProps> = ({
 
   // Full variant
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-red-50 via-white to-orange-50 flex items-center justify-center p-4 ${className}`}>
+    <div className={`min-h-screen bg-gradient-to-br from-red-50 via-white to-orange-50 flex items-center justify-center p-4 w-full overflow-x-hidden ${className}`} style={{ maxWidth: '100vw' }}>
       <div className="max-w-2xl mx-auto text-center">
         
         {/* Główna ikona z animacją */}

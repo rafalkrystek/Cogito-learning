@@ -24,7 +24,6 @@ function ProfilePageContent() {
   const [email, setEmail] = useState('');
   const [userClass, setUserClass] = useState('');
   const [phone, setPhone] = useState('');
-  const [, setUserClasses] = useState<string[]>([]);
   const [classNames, setClassNames] = useState<string[]>([]);
   const [photoURL, setPhotoURL] = useState('');
   const [loading, setLoading] = useState(true);
@@ -40,6 +39,7 @@ function ProfilePageContent() {
   const [showBadgeModal, setShowBadgeModal] = useState(false);
   const [selectedBadge, setSelectedBadge] = useState<any>(null);
   const [showStatsModal, setShowStatsModal] = useState(false);
+  const [coursesCount, setCoursesCount] = useState(0);
 
   // Check if user can edit (only students can edit their own profile)
   const canEdit = user?.role === 'student';
@@ -57,7 +57,6 @@ function ProfilePageContent() {
         setEmail(data.email || '');
         setUserClass(data.class || '');
         setPhone(data.phone || '');
-        setUserClasses(data.classes || []);
         setPhotoURL(data.photoURL || '');
         
         // Pobierz nazwy klas
@@ -82,6 +81,61 @@ function ProfilePageContent() {
       setLoading(false);
     };
     fetchUserData();
+  }, [user]);
+
+  // Pobierz kursy przypisane do użytkownika
+  useEffect(() => {
+    const fetchCourses = async () => {
+      if (!user) return;
+      
+      try {
+        // Pobierz dane użytkownika, aby uzyskać klasy
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (!userDoc.exists()) {
+          setCoursesCount(0);
+          return;
+        }
+        
+        const userData = userDoc.data();
+        const userClassesList = userData.classes || [];
+        
+        const coursesCollection = collection(db, 'courses');
+        
+        // Pobierz kursy przypisane bezpośrednio do użytkownika
+        const [coursesByUid, coursesByEmail] = await Promise.all([
+          getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.uid))),
+          user.email ? getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.email))) : Promise.resolve({ docs: [] } as any)
+        ]);
+        
+        // Połącz i deduplikuj kursy
+        const coursesMap = new Map();
+        [...coursesByUid.docs, ...coursesByEmail.docs].forEach(doc => {
+          coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+        
+        // Sprawdź kursy przypisane do klas (jeśli użytkownik ma klasy)
+        if (userClassesList && Array.isArray(userClassesList) && userClassesList.length > 0) {
+          const classQueries = userClassesList.map((classId: string) =>
+            getDocs(query(coursesCollection, where('assignedClasses', 'array-contains', classId)))
+          );
+          const classSnapshots = await Promise.all(classQueries);
+          classSnapshots.forEach(snapshot => {
+            snapshot.docs.forEach((doc: any) => {
+              if (!coursesMap.has(doc.id)) {
+                coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+              }
+            });
+          });
+        }
+        
+        setCoursesCount(coursesMap.size);
+      } catch (error) {
+        console.error('Error fetching courses:', error);
+        setCoursesCount(0);
+      }
+    };
+    
+    fetchCourses();
   }, [user]);
 
   // Pobierz dane do obliczenia odznak
@@ -419,15 +473,52 @@ function ProfilePageContent() {
   // Calculate statistics
   const totalHours = learningData ? Math.round(learningData.totalMinutes / 60) : 0;
   const daysActive = learningData ? Object.keys(learningData.dailyStats || {}).length : 0;
+  
+  // Oblicz średnią ocen - normalizuj wartości do skali 1-5
   const averageGrade = grades.length > 0 
-    ? grades.reduce((acc, g) => {
-        let value = 0;
-        if (typeof g.value === 'number') value = g.value;
-        else if (typeof g.value_grade === 'number') value = g.value_grade;
-        else if (typeof g.grade === 'number') value = g.grade;
-        else if (typeof g.grade === 'string') value = parseFloat(g.grade);
-        return acc + value;
-      }, 0) / grades.length 
+    ? (() => {
+        const normalizedGrades = grades.map(g => {
+          let value = 0;
+          // Sprawdź różne formaty wartości oceny
+          if (typeof g.value === 'number') {
+            value = g.value;
+          } else if (typeof g.value_grade === 'number') {
+            value = g.value_grade;
+          } else if (typeof g.grade === 'number') {
+            value = g.grade;
+          } else if (typeof g.grade === 'string') {
+            // Obsługa stringów jak "5+", "4-", "3", itp.
+            const cleaned = g.grade.replace(/[+-]/g, '');
+            value = parseFloat(cleaned) || 0;
+            // Jeśli jest "+" dodaj 0.3, jeśli "-" odejmij 0.3
+            if (g.grade.includes('+')) value += 0.3;
+            if (g.grade.includes('-')) value -= 0.3;
+          } else if (typeof g.value === 'string') {
+            const cleaned = g.value.replace(/[+-]/g, '');
+            value = parseFloat(cleaned) || 0;
+            if (g.value.includes('+')) value += 0.3;
+            if (g.value.includes('-')) value -= 0.3;
+          }
+          
+          // Jeśli mamy procent, skonwertuj na ocenę (1-5)
+          if (value === 0 && g.percentage) {
+            const percentage = typeof g.percentage === 'number' ? g.percentage : parseFloat(String(g.percentage));
+            if (percentage >= 90) value = 5;
+            else if (percentage >= 75) value = 4;
+            else if (percentage >= 60) value = 3;
+            else if (percentage >= 45) value = 2;
+            else value = 1;
+          }
+          
+          // Ogranicz do zakresu 1-5
+          value = Math.max(1, Math.min(5, value));
+          return value;
+        }).filter(v => v > 0); // Usuń nieprawidłowe wartości
+        
+        return normalizedGrades.length > 0
+          ? normalizedGrades.reduce((acc, v) => acc + v, 0) / normalizedGrades.length
+          : 0;
+      })()
     : 0;
 
   if (loading) {
@@ -439,7 +530,7 @@ function ProfilePageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       {/* Header */}
       <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 lg:px-8 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
@@ -481,7 +572,7 @@ function ProfilePageContent() {
           <StatCard
             icon={BookOpen}
             label="Kursy"
-            value={0}
+            value={coursesCount}
             gradient="from-blue-500 to-blue-600"
             iconBg="bg-blue-500"
             onClick={() => setShowStatsModal(true)}

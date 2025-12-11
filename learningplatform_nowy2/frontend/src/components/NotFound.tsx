@@ -86,7 +86,7 @@ export const NotFound: React.FC<NotFoundProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
       <div className="max-w-4xl mx-auto text-center">
         
         {/* Główna ikona z animacją */}
