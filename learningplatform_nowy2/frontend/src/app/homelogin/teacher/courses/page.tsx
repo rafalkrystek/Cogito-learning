@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { BookOpen, FileText, Edit, Trash2, Plus } from 'lucide-react';
 import CourseIconPicker from '@/components/CourseIconPicker';
 import Image from 'next/image';
+import { measureAsync } from '@/utils/perf';
 
 interface Course {
   id: string;
@@ -157,148 +158,132 @@ export default function TeacherCourses() {
     return filtered;
   }, []);
 
-  const fetchCourses = useCallback(async (page = 1, useCache = true, retryCount = 0) => {
-    console.log(`[DEBUG] fetchCourses called - page: ${page}, useCache: ${useCache}, retryCount: ${retryCount}`);
-    
-    setLoading(true);
-    setError(null);
-    
-    // Sprawdź cache tylko dla kolejnych odświeżeń, nie przy pierwszym ładowaniu
-    if (page === 1 && useCache) {
-      const cached = getCachedCourses();
-      if (cached) {
-        console.log('[DEBUG] Using cached courses');
-        setCourses(cached.results || cached);
-        setPagination(cached.pagination || {
-          page: 1,
-          page_size: 20,
-          total_pages: 1,
-          count: cached.results?.length || cached.length || 0
-        });
-        setLoading(false);
-        return;
+  const fetchCourses = useCallback(
+    async (page = 1, useCache = true, retryCount = 0) => {
+      setLoading(true);
+      setError(null);
+
+      // Cache tylko dla pierwszej strony
+      if (page === 1 && useCache) {
+        const cached = getCachedCourses();
+        if (cached) {
+          setCourses(cached.results || cached);
+          setPagination(
+            cached.pagination || {
+              page: 1,
+              page_size: 20,
+              total_pages: 1,
+              count: cached.results?.length || cached.length || 0,
+            }
+          );
+          setLoading(false);
+          return;
+        }
       }
-    }
-    
-    try {
-      console.log('[DEBUG] Fetching courses from Firestore...');
-      
-      // Pobierz kursy bezpośrednio z Firestore
-      const { collection, getDocs, query, where } = await import('firebase/firestore');
-      const coursesCollection = collection(db, 'courses');
-      
-      // Pobierz tylko kursy przypisane do zalogowanego nauczyciela
-      const teacherEmail = user?.email;
-      console.log('[DEBUG] Teacher email:', teacherEmail);
-      
-      if (!teacherEmail) {
-        setError('Nie można zidentyfikować nauczyciela');
-        setLoading(false);
-        return;
-      }
-      
-      // Użyj query z where zamiast pobierania wszystkich kursów
-      const [coursesByEmail, coursesByCreatedBy] = await Promise.all([
-        getDocs(query(coursesCollection, where('teacherEmail', '==', teacherEmail))),
-        getDocs(query(coursesCollection, where('created_by', '==', teacherEmail)))
-      ]);
-      
-      // Połącz i deduplikuj kursy
-      const coursesMap = new Map();
-      [coursesByEmail, coursesByCreatedBy].forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          const data = doc.data();
-          coursesMap.set(doc.id, {
-            id: data.id || doc.id,
-            title: data.title || '',
-            description: data.description || '',
-            year_of_study: data.year_of_study || data.year || 1,
-            subject: data.subject || '',
-            is_active: data.is_active !== undefined ? data.is_active : true,
-            created_at: data.created_at || new Date().toISOString(),
-            updated_at: data.updated_at || new Date().toISOString(),
-            pdfUrls: data.pdfUrls || [],
-            links: data.links || [],
-            slug: data.slug || '',
-            created_by: data.created_by || null,
-            teacherEmail: data.teacherEmail || '',
-            assignedUsers: data.assignedUsers || [],
-            sections: data.sections || [],
-            courseType: data.courseType || 'obowiązkowy',
-            iconUrl: data.iconUrl || ''
+
+      try {
+        const { collection, getDocs, query, where } = await import(
+          'firebase/firestore'
+        );
+        const coursesCollection = collection(db, 'courses');
+
+        const teacherEmail = user?.email;
+        if (!teacherEmail) {
+          setError('Nie można zidentyfikować nauczyciela');
+          setLoading(false);
+          return;
+        }
+
+        const [coursesByEmail, coursesByCreatedBy] = await Promise.all([
+          getDocs(
+            query(coursesCollection, where('teacherEmail', '==', teacherEmail))
+          ),
+          getDocs(
+            query(coursesCollection, where('created_by', '==', teacherEmail))
+          ),
+        ]);
+
+        const coursesMap = new Map<string, Course>();
+        [coursesByEmail, coursesByCreatedBy].forEach((snapshot) => {
+          snapshot.docs.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            coursesMap.set(docSnap.id, {
+              id: data.id || docSnap.id,
+              title: data.title || '',
+              description: data.description || '',
+              year_of_study: data.year_of_study || data.year || 1,
+              subject: data.subject || '',
+              is_active: data.is_active !== undefined ? data.is_active : true,
+              created_at: data.created_at || new Date().toISOString(),
+              updated_at: data.updated_at || new Date().toISOString(),
+              pdfUrls: data.pdfUrls || [],
+              links: data.links || [],
+              slug: data.slug || '',
+              created_by: data.created_by || null,
+              teacherEmail: data.teacherEmail || '',
+              assignedUsers: data.assignedUsers || [],
+              sections: data.sections || [],
+              courseType: data.courseType || 'obowiązkowy',
+              iconUrl: data.iconUrl || '',
+            });
           });
         });
-      });
-      
-      const firestoreCourses = Array.from(coursesMap.values());
-      
-      console.log('📥 [DEBUG] Firestore courses loaded:', firestoreCourses.length);
-      console.log('📥 [DEBUG] Teacher courses with courseType:', firestoreCourses.map(c => ({ 
-        title: c.title, 
-        teacherEmail: c.teacherEmail,
-        courseType: c.courseType,
-        hasCourseType: !!c.courseType
-      })));
-      
-      // Sortuj po dacie utworzenia (najnowsze pierwsze)
-      const sortedCourses = firestoreCourses.sort((a, b) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-      
-      // Paginacja po stronie klienta
-      const pageSize = 20;
-      const startIndex = (page - 1) * pageSize;
-      const endIndex = startIndex + pageSize;
-      const paginatedCourses = sortedCourses.slice(startIndex, endIndex);
-      
-      const paginationData = {
-        page: page,
-        page_size: pageSize,
-        total_pages: Math.ceil(sortedCourses.length / pageSize),
-        count: sortedCourses.length
-      };
-      
-      console.log('[DEBUG] Pagination data:', paginationData);
-      console.log('[DEBUG] Courses for current page:', paginatedCourses.length);
-      
-      setCourses(paginatedCourses);
-      setPagination(paginationData);
-      
-      // Cache'uj tylko pierwszą stronę
-      if (page === 1) {
-        console.log('[DEBUG] Caching first page data');
-        setCachedCourses({
-          results: paginatedCourses,
-          pagination: paginationData
-        });
+
+        const firestoreCourses = Array.from(coursesMap.values());
+
+        const sortedCourses = firestoreCourses.sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime()
+        );
+
+        const pageSize = 20;
+        const startIndex = (page - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const paginatedCourses = sortedCourses.slice(startIndex, endIndex);
+
+        const paginationData = {
+          page,
+          page_size: pageSize,
+          total_pages: Math.ceil(sortedCourses.length / pageSize),
+          count: sortedCourses.length,
+        };
+
+        setCourses(paginatedCourses);
+        setPagination(paginationData);
+
+        if (page === 1) {
+          setCachedCourses({
+            results: paginatedCourses,
+            pagination: paginationData,
+          });
+        }
+      } catch (err) {
+        if (retryCount < 2) {
+          setTimeout(() => {
+            fetchCourses(page, useCache, retryCount + 1);
+          }, 1000 * (retryCount + 1));
+          return;
+        }
+
+        if (err instanceof Error) {
+          setError(`Failed to load courses from Firestore: ${err.message}`);
+        } else {
+          setError('Failed to load courses from Firestore');
+        }
+      } finally {
+        setLoading(false);
       }
-      
-      console.log('[DEBUG] Courses loaded successfully from Firestore');
-    } catch (err) {
-      console.error('[DEBUG] Error fetching courses from Firestore:', err);
-      
-      // Retry logic dla błędów sieciowych
-      if (retryCount < 2) {
-        console.log(`[DEBUG] Retrying... Attempt ${retryCount + 1}`);
-        setTimeout(() => {
-          fetchCourses(page, useCache, retryCount + 1);
-        }, 1000 * (retryCount + 1)); // Exponential backoff
-        return;
-      }
-      
-      if (err instanceof Error) {
-        setError(`Failed to load courses from Firestore: ${err.message}`);
-      } else {
-        setError('Failed to load courses from Firestore');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.email, setLoading, setError, setCourses, setPagination, getCachedCourses]);
+    },
+    [user?.email, getCachedCourses]
+  );
 
   useEffect(() => {
-    // Natychmiastowe pobranie kursów bez cache'owania przy pierwszym ładowaniu
-    fetchCourses(1, false);
+    measureAsync('TeacherCourses:fetchCourses', () =>
+      fetchCourses(1, false)
+    ).catch(() => {
+      // błędy są już obsłużone w fetchCourses
+    });
   }, [fetchCourses]);
 
   // Usunięte funkcje związane z tworzeniem kursów - tylko admin może tworzyć kursy
@@ -666,19 +651,7 @@ export default function TeacherCourses() {
 
   // Filtruj kursy gdy zmienia się searchTerm, courseTypeFilter lub courses
   useEffect(() => {
-    console.log('🔄 [DEBUG] useEffect filterCourses triggered:', {
-      coursesLength: courses.length,
-      searchTerm,
-      courseTypeFilter,
-      coursesData: courses.map(c => ({
-        id: c.id,
-        title: c.title,
-        courseType: c.courseType
-      }))
-    });
-    
     const filtered = filterCourses(courses, searchTerm, courseTypeFilter);
-    console.log('🔄 [DEBUG] Setting filteredCourses:', filtered.length);
     setFilteredCourses(filtered);
   }, [courses, searchTerm, courseTypeFilter, filterCourses]);
 

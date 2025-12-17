@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '@/config/firebase';
 import { collection, getDocs, doc, query, where } from 'firebase/firestore';
 import ThemeToggle from '@/components/ThemeToggle';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import Image from 'next/image';
+import { measureAsync } from '@/utils/perf';
 
 interface ParentStudent {
   id: string;
@@ -34,62 +35,152 @@ export default function ParentStudentManagement() {
   const [studentSearch, setStudentSearch] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [assignmentsPage, setAssignmentsPage] = useState(1);
+  const assignmentsPerPage = 20;
 
-  useEffect(() => {
-    fetchData();
+  // Cache helpers - memoized to avoid recreating on every render
+  const CACHE_TTL_MS = 60 * 1000; // 60s
+  const getSessionCache = useCallback(<T,>(key: string): T | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+      if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+        sessionStorage.removeItem(key);
+        return null;
+      }
+      return parsed.data;
+    } catch {
+      return null;
+    }
+  }, [CACHE_TTL_MS]);
+
+  const setSessionCache = useCallback(<T,>(key: string, data: T) => {
+    if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+    } catch {
+      // Ignore cache errors
+    }
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    setLoading(true);
     try {
-      // Fetch all users from Firestore
-      const usersCollection = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersCollection);
-      const usersData = usersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as User[];
+      // Sprawdź cache dla rodziców i uczniów
+      const cacheKeyParents = 'superadmin_parents';
+      const cacheKeyStudents = 'superadmin_students';
+      const cachedParents = getSessionCache<User[]>(cacheKeyParents);
+      const cachedStudents = getSessionCache<User[]>(cacheKeyStudents);
 
-      // Filter parents and students
-      setParents(usersData.filter(u => u.role === 'parent'));
-      setStudents(usersData.filter(u => u.role === 'student'));
+      let parentsData: User[];
+      let studentsData: User[];
 
-      // Fetch parent-student relationships
+      if (cachedParents && cachedStudents) {
+        parentsData = cachedParents;
+        studentsData = cachedStudents;
+      } else {
+        // Pobierz tylko rodziców i tylko uczniów – bez ciągnięcia całej kolekcji users
+        const usersRef = collection(db, 'users');
+
+        const [parentsSnapshot, studentsSnapshot] = await Promise.all([
+          getDocs(query(usersRef, where('role', '==', 'parent'))),
+          getDocs(query(usersRef, where('role', '==', 'student'))),
+        ]);
+
+        parentsData = parentsSnapshot.docs.map(
+          (snap) => ({ id: snap.id, ...snap.data() } as User)
+        );
+        studentsData = studentsSnapshot.docs.map(
+          (snap) => ({ id: snap.id, ...snap.data() } as User)
+        );
+
+        setSessionCache(cacheKeyParents, parentsData);
+        setSessionCache(cacheKeyStudents, studentsData);
+      }
+
+      setParents(parentsData);
+      setStudents(studentsData);
+
+      // Relacje rodzic–uczeń (nie cache'ujemy, bo mogą się często zmieniać)
       const relationshipsCollection = collection(db, 'parent_students');
       const relationshipsSnapshot = await getDocs(relationshipsCollection);
-      const relationshipsData = relationshipsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        created_at: doc.data().created_at?.toDate().toISOString() || new Date().toISOString()
-      })) as ParentStudent[];
+      const relationshipsData = relationshipsSnapshot.docs.map((snap) => {
+        const data = snap.data();
+        const timestamp = data.created_at as { toDate?: () => Date } | undefined;
+        return {
+          id: snap.id,
+          ...data,
+          created_at: timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
+        } as ParentStudent;
+      });
 
       setParentStudents(relationshipsData);
     } catch (err) {
       console.error('Failed to load data:', err);
       setError('Błąd podczas pobierania danych');
       setTimeout(() => setError(''), 3000);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [getSessionCache, setSessionCache]);
 
-  // Filter functions for search
-  const filteredParents = parents.filter(parent => 
-    parent.username?.toLowerCase().includes(parentSearch.toLowerCase()) ||
-    parent.email?.toLowerCase().includes(parentSearch.toLowerCase())
-  );
+  useEffect(() => {
+    measureAsync('SuperadminParentStudent:fetchData', fetchData).catch(() => {
+      // błędy już zalogowane w fetchData
+    });
+  }, [fetchData]);
 
-  const filteredStudents = students.filter(student => 
-    student.username?.toLowerCase().includes(studentSearch.toLowerCase()) ||
-    student.email?.toLowerCase().includes(studentSearch.toLowerCase())
-  );
+  // Memoized filter functions for search
+  const filteredParents = useMemo(() => {
+    if (!parentSearch.trim()) return parents;
+    const searchLower = parentSearch.toLowerCase();
+    return parents.filter(parent => 
+      parent.username?.toLowerCase().includes(searchLower) ||
+      parent.email?.toLowerCase().includes(searchLower)
+    );
+  }, [parents, parentSearch]);
 
-  // Helper function to get parent info by ID
-  const getParentById = (parentId: string) => {
-    return parents.find(p => p.id === parentId);
-  };
+  const filteredStudents = useMemo(() => {
+    if (!studentSearch.trim()) return students;
+    const searchLower = studentSearch.toLowerCase();
+    return students.filter(student => 
+      student.username?.toLowerCase().includes(searchLower) ||
+      student.email?.toLowerCase().includes(searchLower)
+    );
+  }, [students, studentSearch]);
 
-  // Helper function to get student info by ID
-  const getStudentById = (studentId: string) => {
-    return students.find(s => s.id === studentId);
-  };
+  // Memoized helper functions with Map for O(1) lookup
+  const parentsMap = useMemo(() => {
+    const map = new Map<string, User>();
+    parents.forEach(p => map.set(p.id, p));
+    return map;
+  }, [parents]);
+
+  const studentsMap = useMemo(() => {
+    const map = new Map<string, User>();
+    students.forEach(s => map.set(s.id, s));
+    return map;
+  }, [students]);
+
+  const getParentById = useCallback((parentId: string) => {
+    return parentsMap.get(parentId);
+  }, [parentsMap]);
+
+  const getStudentById = useCallback((studentId: string) => {
+    return studentsMap.get(studentId);
+  }, [studentsMap]);
+
+  // Paginated assignments for lazy loading
+  const paginatedAssignments = useMemo(() => {
+    const startIndex = (assignmentsPage - 1) * assignmentsPerPage;
+    const endIndex = startIndex + assignmentsPerPage;
+    return parentStudents.slice(startIndex, endIndex);
+  }, [parentStudents, assignmentsPage]);
+
+  const totalAssignmentsPages = Math.ceil(parentStudents.length / assignmentsPerPage);
 
   const handleAssign = async () => {
     if (!selectedParent || !selectedStudent) {
@@ -124,6 +215,11 @@ export default function ParentStudentManagement() {
 
       setSuccess('Pomyślnie przypisano ucznia do rodzica');
       setTimeout(() => setSuccess(''), 3000);
+      // Invalidate cache and refetch
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('superadmin_parents');
+        sessionStorage.removeItem('superadmin_students');
+      }
       fetchData();
       setSelectedParent(null);
       setSelectedStudent(null);
@@ -143,6 +239,11 @@ export default function ParentStudentManagement() {
 
       setSuccess('Pomyślnie usunięto przypisanie');
       setTimeout(() => setSuccess(''), 3000);
+      // Invalidate cache and refetch
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('superadmin_parents');
+        sessionStorage.removeItem('superadmin_students');
+      }
       fetchData();
     } catch (err) {
       console.error('Error removing parent-student relationship:', err);
@@ -285,18 +386,21 @@ export default function ParentStudentManagement() {
               )}
             </div>
 
-            {/* Parent Select */}
+            {/* Parent Select - Lazy loaded options (max 100 visible) */}
             <select
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               value={selectedParent || ''}
               onChange={(e) => setSelectedParent(e.target.value || null)}
             >
               <option value="">Wybierz rodzica...</option>
-              {filteredParents.map((parent) => (
+              {filteredParents.slice(0, 100).map((parent) => (
                 <option key={parent.id} value={parent.id}>
                   {parent.username} ({parent.email})
                 </option>
               ))}
+              {filteredParents.length > 100 && (
+                <option disabled>... i {filteredParents.length - 100} więcej (użyj wyszukiwarki)</option>
+              )}
             </select>
             
             {parentSearch && filteredParents.length === 0 && (
@@ -329,18 +433,21 @@ export default function ParentStudentManagement() {
               )}
             </div>
 
-            {/* Student Select */}
+            {/* Student Select - Lazy loaded options (max 100 visible) */}
             <select
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               value={selectedStudent || ''}
               onChange={(e) => setSelectedStudent(e.target.value || null)}
             >
               <option value="">Wybierz ucznia...</option>
-              {filteredStudents.map((student) => (
+              {filteredStudents.slice(0, 100).map((student) => (
                 <option key={student.id} value={student.id}>
                   {student.username} ({student.email})
                 </option>
               ))}
+              {filteredStudents.length > 100 && (
+                <option disabled>... i {filteredStudents.length - 100} więcej (użyj wyszukiwarki)</option>
+              )}
             </select>
             
             {studentSearch && filteredStudents.length === 0 && (
@@ -376,92 +483,124 @@ export default function ParentStudentManagement() {
       <div className="bg-white shadow-lg rounded-lg px-8 pt-6 pb-8">
         <h2 className="text-xl font-bold mb-6 text-gray-800">Istniejące Przypisania Rodzic-Uczeń</h2>
         
-        {parentStudents.length === 0 ? (
+        {loading ? (
+          <div className="text-center py-8">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
+            <p className="mt-3 text-gray-600">Ładowanie przypisań...</p>
+          </div>
+        ) : parentStudents.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 text-lg">Brak przypisanych relacji rodzic-uczeń</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full leading-normal">
-              <thead>
-                <tr>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Uczeń
-                  </th>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Email Ucznia
-                  </th>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Przypisany Rodzic
-                  </th>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Email Rodzica
-                  </th>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Data Utworzenia
-                  </th>
-                  <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Akcje
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {parentStudents.map((ps) => {
-                  const student = getStudentById(ps.student);
-                  const parent = getParentById(ps.parent);
-                  return (
-                    <tr key={ps.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-blue-600 font-semibold text-xs">
-                              {student?.username?.charAt(0)?.toUpperCase() || '?'}
-                            </span>
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full leading-normal">
+                <thead>
+                  <tr>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Uczeń
+                    </th>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Email Ucznia
+                    </th>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Przypisany Rodzic
+                    </th>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Email Rodzica
+                    </th>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Data Utworzenia
+                    </th>
+                    <th className="px-6 py-4 border-b-2 border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Akcje
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedAssignments.map((ps) => {
+                    const student = getStudentById(ps.student);
+                    const parent = getParentById(ps.parent);
+                    return (
+                      <tr key={ps.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                              <span className="text-blue-600 font-semibold text-xs">
+                                {student?.username?.charAt(0)?.toUpperCase() || '?'}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">{student?.username || 'Nieznany uczeń'}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{student?.username || 'Nieznany uczeń'}</p>
+                        </td>
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
+                          {student?.email || 'Brak emaila'}
+                        </td>
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
+                              <span className="text-green-600 font-semibold text-xs">
+                                {parent?.username?.charAt(0)?.toUpperCase() || '?'}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">{parent?.username || 'Nieznany rodzic'}</p>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
-                        {student?.email || 'Brak emaila'}
-                      </td>
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-green-600 font-semibold text-xs">
-                              {parent?.username?.charAt(0)?.toUpperCase() || '?'}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{parent?.username || 'Nieznany rodzic'}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
-                        {parent?.email || 'Brak emaila'}
-                      </td>
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
-                        {new Date(ps.created_at).toLocaleDateString('pl-PL', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })}
-                      </td>
-                      <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
-                        <button
-                          onClick={() => handleRemove(ps.id)}
-                          className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
-                        >
-                          Usuń Przypisanie
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
+                          {parent?.email || 'Brak emaila'}
+                        </td>
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
+                          {new Date(ps.created_at).toLocaleDateString('pl-PL', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                          })}
+                        </td>
+                        <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
+                          <button
+                            onClick={() => handleRemove(ps.id)}
+                            className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                          >
+                            Usuń Przypisanie
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Pagination for assignments */}
+            {totalAssignmentsPages > 1 && (
+              <div className="mt-6 flex justify-center items-center gap-2">
+                <button
+                  onClick={() => setAssignmentsPage(p => Math.max(1, p - 1))}
+                  disabled={assignmentsPage <= 1}
+                  className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Poprzednia
+                </button>
+                
+                <span className="px-4 py-2 text-sm text-gray-700">
+                  Strona {assignmentsPage} z {totalAssignmentsPages} ({parentStudents.length} przypisań)
+                </span>
+                
+                <button
+                  onClick={() => setAssignmentsPage(p => Math.min(totalAssignmentsPages, p + 1))}
+                  disabled={assignmentsPage >= totalAssignmentsPages}
+                  className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Następna
+                </button>
+              </div>
+            )}
+          </>
         )}
         
         <div className="mt-6 text-center">

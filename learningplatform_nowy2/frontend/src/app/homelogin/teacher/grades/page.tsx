@@ -10,6 +10,7 @@ import { Plus, ArrowLeft, User, Award, Users, Pencil, Trash2, X } from 'lucide-r
 import { db } from '@/config/firebase';
 import { collection, getDocs, addDoc, query, where, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { Class } from '@/types/models';
+import { measureAsync } from '@/utils/perf';
 
 interface Grade {
   id: string;
@@ -158,26 +159,33 @@ export default function TeacherGradesPage() {
     try {
       console.log('👥 fetchStudents - Fetching students for teacher:', user.email);
       
+      // Zamiast pobierać wszystkich użytkowników, pobierz tylko studentów przypisanych do nauczyciela
       const usersRef = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersRef);
+      const [byUidSnapshot, byEmailSnapshot] = await Promise.all([
+        getDocs(query(usersRef, where('assignedToTeacher', '==', user.uid))),
+        getDocs(query(usersRef, where('assignedToTeacher', '==', user.email)))
+      ]);
       
-      const allUsers = usersSnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserData));
+      const allUsers: UserData[] = [
+        ...byUidSnapshot.docs.map(doc => ({ id: doc.id, uid: doc.id, ...doc.data() } as UserData)),
+        ...byEmailSnapshot.docs.map(doc => ({ id: doc.id, uid: doc.id, ...doc.data() } as UserData)),
+      ];
       
-      // Filtruj tylko studentów przypisanych do tego nauczyciela
-      const teacherStudents = allUsers.filter(userData => 
-        userData.role === 'student' && 
-        userData.uid && // Upewnij się, że uid istnieje
-        (userData.assignedToTeacher === user.uid || 
-         userData.assignedToTeacher === user.email)
-      ).map(userData => ({
-        uid: userData.uid!,
-        displayName: userData.displayName || '',
-        email: userData.email || '',
-        role: userData.role,
-        assignedToTeacher: userData.assignedToTeacher
-      } as Student));
+      // Dedup
+      const usersMap = new Map<string, UserData>();
+      allUsers.forEach(u => usersMap.set(u.uid ?? u.id, u));
+      const uniqueUsers = Array.from(usersMap.values());
       
-      console.log('👥 fetchStudents - All users:', allUsers.length);
+      const teacherStudents = uniqueUsers
+        .filter(userData => userData.role === 'student' && userData.uid)
+        .map(userData => ({
+          uid: userData.uid!,
+          displayName: userData.displayName || '',
+          email: userData.email || '',
+          role: userData.role,
+          assignedToTeacher: userData.assignedToTeacher
+        } as Student));
+      
       console.log('👥 fetchStudents - Teacher students:', teacherStudents.length);
       
       setStudents(teacherStudents);
@@ -194,9 +202,21 @@ export default function TeacherGradesPage() {
       console.log('📊 fetchGrades - Fetching grades for teacher:', user.email);
       
       const gradesRef = collection(db, 'grades');
-      const gradesSnapshot = await getDocs(gradesRef);
+      // Pobierz tylko oceny wystawione przez tego nauczyciela (po uid i email)
+      const [byUidSnapshot, byEmailSnapshot] = await Promise.all([
+        getDocs(query(gradesRef, where('teacherId', '==', user.uid))),
+        getDocs(query(gradesRef, where('teacherEmail', '==', user.email)))
+      ]);
       
-      const allGrades = gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+      const allGradesRaw: Grade[] = [
+        ...byUidSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade)),
+        ...byEmailSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade)),
+      ];
+
+      // Dedup po id
+      const gradesMap = new Map<string, Grade>();
+      allGradesRaw.forEach(g => gradesMap.set(g.id, g));
+      const allGrades = Array.from(gradesMap.values());
       
       // Filtruj oceny tylko dla uczniów przypisanych do tego nauczyciela
       const teacherStudentIds = students.map(student => student.uid);
@@ -205,7 +225,6 @@ export default function TeacherGradesPage() {
         students.some(student => student.email === grade.studentEmail)
       );
       
-      console.log('📊 fetchGrades - All grades:', allGrades.length);
       console.log('📊 fetchGrades - Teacher grades:', teacherGrades.length);
       
       setGrades(teacherGrades);
@@ -221,21 +240,23 @@ export default function TeacherGradesPage() {
     const loadData = async () => {
       setLoading(true);
       try {
-        await fetchClasses();
-        await fetchStudents();
-    } catch (error) {
+        await Promise.all([
+          measureAsync('TeacherGrades:fetchClasses', fetchClasses),
+          measureAsync('TeacherGrades:fetchStudents', fetchStudents),
+        ]);
+      } catch (error) {
         console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      } finally {
+        setLoading(false);
+      }
+    };
 
     loadData();
   }, [user, fetchClasses, fetchStudents]);
 
   useEffect(() => {
     if (students.length > 0) {
-      fetchGrades();
+      measureAsync('TeacherGrades:fetchGrades', fetchGrades);
     }
   }, [students, user, fetchGrades]);
 

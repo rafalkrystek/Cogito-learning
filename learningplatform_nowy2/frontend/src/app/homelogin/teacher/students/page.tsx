@@ -366,6 +366,13 @@ export default function StudentsPage() {
       
       // 3. Pobierz dane uczniów i oblicz statystyki
       const studentsData: Student[] = [];
+
+      // 🔥 Kluczowa optymalizacja: pobierz oceny raz dla całej klasy,
+      // zamiast robić osobne zapytanie getDocs w pętli dla każdego ucznia.
+      const gradesRef = collection(db, 'grades');
+      const gradesSnapshot = await getDocs(
+        query(gradesRef, where('classId', '==', selectedClass.id))
+      );
       
       for (const studentId of allStudentIds) {
         // Sprawdź czy studentId nie jest undefined
@@ -381,9 +388,7 @@ export default function StudentsPage() {
           const studentData = studentDoc.data();
           const studentCourses = courseStudentMap.get(studentId) || [];
           
-          // Oblicz średnią ocen
-          const gradesRef = collection(db, 'grades');
-          const gradesSnapshot = await getDocs(gradesRef);
+          // Oblicz średnią ocen na podstawie wcześniej pobranych ocen klasy
           const studentGrades = gradesSnapshot.docs.filter(doc => {
             const gradeData = doc.data();
             return gradeData.studentId === studentId || gradeData.user_id === studentId;

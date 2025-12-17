@@ -13,7 +13,7 @@ const Calendar = dynamic(() => import('../../components/Calendar'), {
   ssr: false,
   loading: () => <div className="h-96 bg-gray-100 dark:bg-gray-800 animate-pulse rounded-lg" />
 });
-import { collection, getDocs, query, where, deleteDoc, doc, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, limit, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Search, ArrowUp, ArrowDown } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -56,6 +56,40 @@ interface SearchResult {
   subtitle?: string;
   description?: string;
   photoURL?: string;
+}
+
+// Simple in-memory helpers for sessionStorage caching
+const CACHE_TTL_MS = 60 * 1000; // 60s – krótki, ale wystarczający, żeby uniknąć spamowania Firestore
+
+interface SessionCacheEntry<T> {
+  timestamp: number;
+  data: T;
+}
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SessionCacheEntry<T>;
+    if (!parsed.timestamp || Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    const entry: SessionCacheEntry<T> = { timestamp: Date.now(), data };
+    sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Ignoruj błędy cache – nie są krytyczne dla działania
+  }
 }
 
 // Function to get sidebar links based on user role
@@ -174,6 +208,7 @@ function Dashboard() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [, setLoadingTeachers] = useState(true);
   const searchRef = useRef<HTMLDivElement>(null);
+  const [visibleCoursesCount, setVisibleCoursesCount] = useState(8);
 
   interface Notification {
     id: string;
@@ -217,9 +252,19 @@ function Dashboard() {
     return () => window.removeEventListener('resize', updateSearchPosition);
   }, []);
 
-  // Pobierz kursy przypisane do użytkownika
+  // Pobierz kursy przypisane do użytkownika (z lekkim cache w sessionStorage)
   useEffect(() => {
     if (!user) return;
+
+    const cacheKey = `dashboard_assignedCourses_${user.uid}`;
+    const cachedCourses = getSessionCache<Course[]>(cacheKey);
+    
+    if (cachedCourses && cachedCourses.length > 0) {
+      setAssignedCourses(cachedCourses);
+      setLoadingAssigned(false);
+      return;
+    }
+
     const fetchAssignedCourses = async () => {
       setLoadingAssigned(true);
       try {
@@ -240,9 +285,12 @@ function Dashboard() {
             });
           });
         });
-        
         const assigned = Array.from(coursesMap.values()) as Course[];
+
         setAssignedCourses(assigned);
+
+        // Zapisz do cache, aby kolejne wejścia na dashboard nie biły od razu do Firestore
+        setSessionCache(cacheKey, assigned);
       } catch (error) {
         console.error('Error fetching assigned courses:', error);
         setAssignedCourses([]);
@@ -298,6 +346,7 @@ function Dashboard() {
   // Użyj memoizowanych kursów
   useEffect(() => {
     setFilteredCourses(filteredCoursesMemo);
+    setVisibleCoursesCount(8); // resetuj paginację przy zmianie listy
   }, [filteredCoursesMemo]);
 
   // Funkcja zmiany sortowania kursów - memoizowana
@@ -310,8 +359,79 @@ function Dashboard() {
     }
   }, [courseSortBy, courseSortOrder]);
 
-  // Pobierz nauczycieli z Firestore
+  // Memoizowana funkcja do sortowania, filtrowania i wzbogacania eventów
+  const sortAndDecorateEvents = useCallback((eventsList: any[], now: Date) => {
+    // Sortuj po dacie malejąco
+    const sorted = [...eventsList].sort((a: any, b: any) => {
+      const deadlineA = a.deadline || a.date;
+      const deadlineB = b.deadline || b.date;
+      return new Date(deadlineB).getTime() - new Date(deadlineA).getTime();
+    });
+
+    // Filtruj i dodaj pola pomocnicze
+    return sorted
+      .filter((ev: any) => {
+        const eventDeadline = ev.deadline || ev.date;
+        if (!eventDeadline) {
+          return false; // Pomiń eventy bez daty
+        }
+
+        const deadline = new Date(eventDeadline);
+
+        // Sprawdź czy data jest poprawna
+        if (isNaN(deadline.getTime())) {
+          return false;
+        }
+
+        // Usuń wydarzenia, które są starsze niż 7 dni PO terminie
+        const sevenDaysAfterEvent = new Date(deadline.getTime() + 7 * 24 * 60 * 60 * 1000);
+        if (sevenDaysAfterEvent < now) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((ev: any) => {
+        const deadline = new Date(ev.deadline || ev.date);
+        const isOverdue = deadline < now;
+        const timeDiff = deadline.getTime() - now.getTime();
+        const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+        // Określ priorytet na podstawie czasu do deadline
+        let priority: 'low' | 'medium' | 'high' = 'low';
+        if (isOverdue) priority = 'high';
+        else if (daysDiff <= 3) priority = 'high';
+        else if (daysDiff <= 7) priority = 'medium';
+
+        // Określ typ powiadomienia na podstawie tytułu
+        let type: 'assignment' | 'exam' | 'announcement' | 'grade' | 'course' = 'announcement';
+        const title = ev.title?.toLowerCase() || '';
+        if (title.includes('zadanie') || title.includes('assignment')) type = 'assignment';
+        else if (title.includes('egzamin') || title.includes('exam') || title.includes('test')) type = 'exam';
+        else if (title.includes('ocena') || title.includes('grade')) type = 'grade';
+        else if (title.includes('kurs') || title.includes('course')) type = 'course';
+
+        return {
+          ...ev,
+          isOverdue,
+          priority,
+          type,
+          read: false
+        };
+      });
+  }, []);
+
+  // Pobierz nauczycieli z Firestore (z cache w sessionStorage)
   useEffect(() => {
+    const cacheKey = 'dashboard_teachers_v1';
+    const cachedTeachers = getSessionCache<Teacher[]>(cacheKey);
+
+    if (cachedTeachers && cachedTeachers.length > 0) {
+      setTeachers(cachedTeachers);
+      setLoadingTeachers(false);
+      return;
+    }
+
     const fetchTeachers = async () => {
       setLoadingTeachers(true);
       try {
@@ -335,8 +455,10 @@ function Dashboard() {
             photoURL: data.photoURL || '',
           });
         });
-        
-        setTeachers(Array.from(teachersMap.values()));
+        const teachersArray = Array.from(teachersMap.values()) as Teacher[];
+
+        setTeachers(teachersArray);
+        setSessionCache(cacheKey, teachersArray);
       } catch (error) {
         console.error('Error fetching teachers:', error);
         setTeachers([]);
@@ -510,45 +632,55 @@ function Dashboard() {
           );
           const notificationsSnapshot = await getDocs(notificationsQuery);
           
-          // Przetwórz powiadomienia równolegle zamiast w pętli
-          const notificationPromises = notificationsSnapshot.docs.map(async (notificationDoc) => {
+          // Najpierw zdecyduj, które dokumenty usunąć, a które zachować
+          const batch = writeBatch(db);
+          const notificationsToKeep: Notification[] = [];
+
+          notificationsSnapshot.docs.forEach((notificationDoc) => {
             const notificationData = notificationDoc.data();
             const eventDate = notificationData.event_date ? new Date(notificationData.event_date) : null;
-            
-            // Usuń powiadomienia z niepoprawną datą lub stare
+
+            let shouldDelete = false;
+
+            // Usuń powiadomienia z niepoprawną datą
             if (notificationData.event_date && (!eventDate || isNaN(eventDate.getTime()))) {
-              await deleteDoc(doc(db, 'notifications', notificationDoc.id));
-              return null;
+              shouldDelete = true;
             }
-            
-            if (eventDate) {
+
+            // Usuń powiadomienia starsze niż 7 dni po dacie wydarzenia
+            if (!shouldDelete && eventDate) {
               const sevenDaysAfterEvent = new Date(eventDate.getTime() + 7 * 24 * 60 * 60 * 1000);
               if (sevenDaysAfterEvent < now) {
-                await deleteDoc(doc(db, 'notifications', notificationDoc.id));
-                return null;
+                shouldDelete = true;
               }
             }
-            
+
+            if (shouldDelete) {
+              batch.delete(doc(db, 'notifications', notificationDoc.id));
+              return;
+            }
+
             if (notificationData.event_id) {
               eventIdsFromNotifications.add(notificationData.event_id);
             }
-            
-            return {
+
+            notificationsToKeep.push({
               id: notificationDoc.id,
               title: notificationData.title || 'Nowe wydarzenie',
               description: notificationData.message || '',
               deadline: notificationData.event_date || notificationData.timestamp || new Date().toISOString(),
-              type: 'event' as const,
+              type: 'announcement' as const,
               priority: 'medium' as const,
               read: notificationData.read || false,
               isOverdue: eventDate ? eventDate < now : false,
-              students: [user.uid],
-              event_id: notificationData.event_id
-            };
+              students: [user.uid]
+            });
           });
-          
-          const processedNotifications = await Promise.all(notificationPromises);
-          allNotificationsList.push(...processedNotifications.filter(Boolean));
+
+          // Wykonaj usunięcia w jednej commitce – nie blokuj pętli pojedynczymi awaitami
+          await batch.commit();
+
+          allNotificationsList.push(...notificationsToKeep);
         }
         
         // 2. Pobierz eventy jako powiadomienia - zoptymalizowane z where i limit
@@ -580,62 +712,8 @@ function Dashboard() {
           eventsList = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         }
 
-        // Sortuj po dacie malejąco
-        eventsList.sort((a: any, b: any) => {
-          const deadlineA = a.deadline || a.date;
-          const deadlineB = b.deadline || b.date;
-          return new Date(deadlineB).getTime() - new Date(deadlineA).getTime();
-        });
-        
-        // Dodaj informację o przekroczonym terminie i wzbogac dane
-        eventsList = eventsList.filter((ev: any) => {
-          const eventDeadline = ev.deadline || ev.date;
-          if (!eventDeadline) {
-            return false; // Pomiń eventy bez daty
-          }
-          
-          const deadline = new Date(eventDeadline);
-          
-          // Sprawdź czy data jest poprawna
-          if (isNaN(deadline.getTime())) {
-            return false;
-          }
-          
-          // Usuń wydarzenia, które są starsze niż 7 dni PO terminie
-          const sevenDaysAfterEvent = new Date(deadline.getTime() + 7 * 24 * 60 * 60 * 1000);
-          if (sevenDaysAfterEvent < now) {
-            return false;
-          }
-          
-          return true;
-        }).map((ev: any) => {
-          const deadline = new Date(ev.deadline || ev.date);
-          const isOverdue = deadline < now;
-          const timeDiff = deadline.getTime() - now.getTime();
-          const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-          
-          // Określ priorytet na podstawie czasu do deadline
-          let priority: 'low' | 'medium' | 'high' = 'low';
-          if (isOverdue) priority = 'high';
-          else if (daysDiff <= 3) priority = 'high';
-          else if (daysDiff <= 7) priority = 'medium';
-          
-          // Określ typ powiadomienia na podstawie tytułu
-          let type: 'assignment' | 'exam' | 'announcement' | 'grade' | 'course' = 'announcement';
-          const title = ev.title?.toLowerCase() || '';
-          if (title.includes('zadanie') || title.includes('assignment')) type = 'assignment';
-          else if (title.includes('egzamin') || title.includes('exam') || title.includes('test')) type = 'exam';
-          else if (title.includes('ocena') || title.includes('grade')) type = 'grade';
-          else if (title.includes('kurs') || title.includes('course')) type = 'course';
-          
-          return {
-            ...ev,
-            isOverdue,
-            priority,
-            type,
-            read: false
-          };
-        });
+        // Posortuj i wzbogacone eventy za pomocą memoizowanej funkcji
+        eventsList = sortAndDecorateEvents(eventsList, now);
         
         // Połącz powiadomienia z notifications i eventy
         const combinedNotifications = [...allNotificationsList, ...eventsList];
@@ -668,7 +746,7 @@ function Dashboard() {
     // Odświeżaj co 5 minut
     const interval = setInterval(fetchNotifications, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, sortAndDecorateEvents]);
 
 
   // Funkcja do obsługi kliknięcia w powiadomienie - memoizowana
@@ -1310,8 +1388,9 @@ function Dashboard() {
                   <p className="text-gray-400 text-sm mt-1">Skontaktuj się z nauczycielem, aby zostać dodanym do kursu.</p>
                 </div>
               ) : (
+                <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {filteredCourses.map((course, index) => {
+                  {filteredCourses.slice(0, visibleCoursesCount).map((course, index) => {
                     // Kolory - stała tablica poza komponentem dla lepszej wydajności
                     const colors = [
                       'from-emerald-500 to-emerald-600',
@@ -1356,6 +1435,18 @@ function Dashboard() {
                     );
                   })}
                 </div>
+                {filteredCourses.length > visibleCoursesCount && (
+                  <div className="flex justify-center mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCoursesCount((prev) => prev + 8)}
+                      className="px-4 py-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                    >
+                      Załaduj więcej kursów
+                    </button>
+                  </div>
+                )}
+                </>
               )}
             </div>
             

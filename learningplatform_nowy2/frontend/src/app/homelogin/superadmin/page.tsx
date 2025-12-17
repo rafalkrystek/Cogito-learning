@@ -1,11 +1,12 @@
 "use client";
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import Link from "next/link";
 import Providers from '@/components/Providers';
 import { db } from "@/config/firebase";
 import { collection, getDocs, doc, updateDoc, getDoc } from "firebase/firestore";
 import { auth } from "@/config/firebase";
+import { measureAsync } from '@/utils/perf';
 import {
   BookOpen,
   Users,
@@ -137,10 +138,343 @@ function SuperAdminDashboardContent() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<string>('all');
   const [userStatusFilter, setUserStatusFilter] = useState<string>('all');
+  const [usersPageSize] = useState(30); // Zmniejszone z 50 do 30 dla lepszej wydajności
+  const [usersPage, setUsersPage] = useState(1);
+  
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+  const [coursesPage, setCoursesPage] = useState(1);
+  const [groupsPage, setGroupsPage] = useState(1);
+  const [bugReportsPage, setBugReportsPage] = useState(1);
+  const [pendingUsersPage, setPendingUsersPage] = useState(1);
+  const coursesPerPage = 20;
+  const groupsPerPage = 20;
+  const bugReportsPerPage = 10;
+  const pendingUsersPerPage = 30;
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      if (debouncedSearchTerm) {
+        const search = debouncedSearchTerm.toLowerCase();
+        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
+        const email = (user.email || '').toLowerCase();
+        if (!fullName.includes(search) && !email.includes(search)) {
+          return false;
+        }
+      }
+
+      if (userRoleFilter !== 'all' && user.role !== userRoleFilter) {
+        return false;
+      }
+
+      if (userStatusFilter !== 'all') {
+        if (userStatusFilter === 'approved' && !user.approved) {
+          return false;
+        }
+        if (userStatusFilter === 'pending' && user.approved) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [users, debouncedSearchTerm, userRoleFilter, userStatusFilter]);
+  
+  // Memoized counts
+  const approvedUsersCount = useMemo(() => users.filter(u => u.approved).length, [users]);
+  const pendingUsersCount = useMemo(() => users.filter(u => !u.approved).length, [users]);
+
+  const paginatedUsers = useMemo(() => {
+    const end = usersPage * usersPageSize;
+    return filteredUsers.slice(0, end);
+  }, [filteredUsers, usersPage, usersPageSize]);
+
+  // Cache helpers - memoized to avoid recreating on every render
+  const CACHE_TTL_MS = 60 * 1000; // 60s
+  const getSessionCache = useCallback(<T,>(key: string): T | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+      if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+        sessionStorage.removeItem(key);
+        return null;
+      }
+      return parsed.data;
+    } catch {
+      return null;
+    }
+  }, [CACHE_TTL_MS]);
+
+  const setSessionCache = useCallback(<T,>(key: string, data: T) => {
+    if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+    } catch {
+      // Ignore cache errors
+    }
+  }, []);
+
+  // Memoized Maps for O(1) lookup
+  const usersMap = useMemo(() => {
+    const map = new Map<string, FirestoreUser>();
+    users.forEach(u => map.set(u.email || '', u));
+    return map;
+  }, [users]);
+
+  // Paginated courses
+  const paginatedCourses = useMemo(() => {
+    const startIndex = (coursesPage - 1) * coursesPerPage;
+    const endIndex = startIndex + coursesPerPage;
+    return courses.slice(startIndex, endIndex);
+  }, [courses, coursesPage]);
+
+  const totalCoursesPages = Math.ceil(courses.length / coursesPerPage);
+
+  // Paginated groups
+  const paginatedGroups = useMemo(() => {
+    const startIndex = (groupsPage - 1) * groupsPerPage;
+    const endIndex = startIndex + groupsPerPage;
+    return groups.slice(startIndex, endIndex);
+  }, [groups, groupsPage]);
+
+  const totalGroupsPages = Math.ceil(groups.length / groupsPerPage);
+
+  // Paginated bug reports
+  const paginatedBugReports = useMemo(() => {
+    const startIndex = (bugReportsPage - 1) * bugReportsPerPage;
+    const endIndex = startIndex + bugReportsPerPage;
+    return bugReports.slice(startIndex, endIndex);
+  }, [bugReports, bugReportsPage]);
+
+  const totalBugReportsPages = Math.ceil(bugReports.length / bugReportsPerPage);
+
+  // Memoized filtered students for selects
+  const studentsForSelect = useMemo(() => {
+    return users.filter(u => u.role === 'student').slice(0, 100);
+  }, [users]);
+  
+  // Memoized teachers list
+  const teachersList = useMemo(() => {
+    return users.filter(u => u.role === 'teacher');
+  }, [users]);
+  
+  // Memoized pending users list
+  const pendingUsersList = useMemo(() => {
+    return users.filter(u => !u.approved);
+  }, [users]);
+
+  // Paginated pending users
+  const paginatedPendingUsers = useMemo(() => {
+    const startIndex = (pendingUsersPage - 1) * pendingUsersPerPage;
+    const endIndex = startIndex + pendingUsersPerPage;
+    return pendingUsersList.slice(startIndex, endIndex);
+  }, [pendingUsersList, pendingUsersPage, pendingUsersPerPage]);
+
+  const totalPendingUsersPages = Math.ceil(pendingUsersList.length / pendingUsersPerPage);
+
+  // Memoized courses for selects (lazy loaded)
+  const coursesForSelect = useMemo(() => {
+    return courses.slice(0, 100);
+  }, [courses]);
+  
+  // Memoized role colors (move outside map)
+  const roleColors: { [key: string]: string } = useMemo(() => ({
+    'admin': 'bg-red-500',
+    'teacher': 'bg-[#4067EC]',
+    'parent': 'bg-purple-500',
+    'student': 'bg-green-500'
+  }), []);
+  
+  // Memoized role labels
+  const roleLabels: { [key: string]: string } = useMemo(() => ({
+    'admin': '👑 Admin',
+    'teacher': '👨‍🏫 Nauczyciel',
+    'parent': '👨‍👩‍👧 Rodzic',
+    'student': '🎓 Uczeń'
+  }), []);
+  
+  // Memoized users for select (lazy loaded)
+  const usersForSelect = useMemo(() => {
+    return users.slice(0, 100);
+  }, [users]);
+
+  // Memoized UserCard component
+  const UserCard = memo(({ user, roleColor, roleLabel, onApprove, onReject, onSetTeacher, onSetAdmin, onSetParent, onSetStudent, onEditSpecialization, onDelete }: {
+    user: FirestoreUser;
+    roleColor: string;
+    roleLabel: string;
+    onApprove: (id: string) => void;
+    onReject: (id: string) => void;
+    onSetTeacher: (email: string) => void;
+    onSetAdmin: (id: string) => void;
+    onSetParent: (id: string) => void;
+    onSetStudent: (id: string) => void;
+    onEditSpecialization: (user: FirestoreUser) => void;
+    onDelete: (id: string) => void;
+  }) => {
+    return (
+      <div 
+        key={user.id} 
+        className="group bg-white dark:bg-white/10 backdrop-blur-xl rounded-xl p-4 border border-gray-200 dark:border-white/20 hover:border-gray-300 dark:hover:border-white/40 transition-all duration-300 hover:shadow-xl"
+      >
+        <div className="flex items-center justify-between gap-4">
+          {/* Lewa strona - informacje o użytkowniku */}
+          <div className="flex items-center gap-4 flex-1 min-w-0">
+            <div className={`w-12 h-12 ${roleColor} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
+              <span className="text-white font-bold text-lg">
+                {user.firstName?.[0] || ''}{user.lastName?.[0] || ''}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="font-bold text-gray-900 dark:text-white text-lg truncate">
+                  {user.firstName} {user.lastName}
+                </h3>
+                {user.approved ? (
+                  <span className="px-2 py-0.5 bg-green-100 dark:bg-green-500/30 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-200 rounded-full text-xs font-semibold flex-shrink-0">
+                    ✅ Zatwierdzony
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-500/30 border border-yellow-300 dark:border-yellow-500/50 text-yellow-700 dark:text-yellow-200 rounded-full text-xs font-semibold flex-shrink-0">
+                    ⏳ Oczekuje
+                  </span>
+                )}
+              </div>
+              <p className="text-gray-600 dark:text-white/70 text-sm truncate">{user.email}</p>
+              <div className="mt-1">
+                <span className={`inline-flex items-center px-2 py-1 ${roleColor} text-white rounded-lg text-xs font-semibold`}>
+                  {roleLabel}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Prawa strona - akcje */}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {!user.approved ? (
+              <button 
+                onClick={() => onApprove(user.id)}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
+                title="Zatwierdź użytkownika"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Zatwierdź
+              </button>
+            ) : (
+              <button 
+                onClick={() => onReject(user.id)}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
+                title="Odrzuć użytkownika"
+              >
+                <XCircle className="h-4 w-4" />
+                Odrzuć
+              </button>
+            )}
+            
+            {user.role !== 'teacher' && (
+              <button 
+                onClick={() => onSetTeacher(user.email || '')}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                title="Ustaw jako nauczyciela"
+              >
+                <GraduationCap className="h-4 w-4" />
+                Nauczyciel
+              </button>
+            )}
+            {user.role !== 'admin' && (
+              <button 
+                onClick={() => onSetAdmin(user.id)}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                title="Ustaw jako admina"
+              >
+                <Shield className="h-4 w-4" />
+                Admin
+              </button>
+            )}
+            {user.role !== 'parent' && (
+              <button 
+                onClick={() => onSetParent(user.id)}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                title="Ustaw jako rodzica"
+              >
+                <Users className="h-4 w-4" />
+                Rodzic
+              </button>
+            )}
+            {user.role === 'admin' && (
+              <button 
+                onClick={() => onSetTeacher(user.email || '')}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                title="Ustaw jako nauczyciela"
+              >
+                <GraduationCap className="h-4 w-4" />
+                Nauczyciel
+              </button>
+            )}
+            {user.role === 'teacher' && (
+              <>
+                <button 
+                  onClick={() => onSetStudent(user.id)}
+                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                  title="Ustaw jako ucznia"
+                >
+                  <Users className="h-4 w-4" />
+                  Uczeń
+                </button>
+                <button 
+                  onClick={() => onEditSpecialization(user)}
+                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
+                  title="Edytuj specjalizację"
+                >
+                  <Edit className="h-4 w-4" />
+                  Spec.
+                </button>
+              </>
+            )}
+            <button 
+              onClick={() => onDelete(user.id)}
+              className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all duration-200 hover:shadow-md"
+              title="Usuń użytkownika"
+            >
+              <Trash2 className="h-4 w-4" />
+              Usuń
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  });
+  
+  UserCard.displayName = 'UserCard';
+
+  // Helper to invalidate cache - MUST be defined before functions that use it
+  const invalidateCache = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('superadmin_users');
+      sessionStorage.removeItem('superadmin_courses');
+      sessionStorage.removeItem('superadmin_groups');
+    }
+  }, []);
 
   const fetchUsers = useCallback(async () => {
+    const cacheKey = 'superadmin_users';
+    const cached = getSessionCache<FirestoreUser[]>(cacheKey);
+    
+    if (cached) {
+      setUsers(cached);
+      return;
+    }
+
     try {
       const { collection, getDocs } = await import('firebase/firestore');
       const usersCollection = collection(db, 'users');
@@ -148,44 +482,61 @@ function SuperAdminDashboardContent() {
       const usersData = usersSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      }));
+      })) as FirestoreUser[];
       setUsers(usersData);
+      setSessionCache(cacheKey, usersData);
       console.log('Users loaded from Firestore:', usersData.length);
     } catch (err) {
       console.error('Failed to load users:', err);
       setError('Failed to load users');
-    } finally {
-      setLoading(false);
     }
-  }, [setUsers, setLoading, setError]);
+  }, [setError, getSessionCache, setSessionCache]);
 
   const fetchCourses = useCallback(async () => {
+    const cacheKey = 'superadmin_courses';
+    const cached = getSessionCache<Course[]>(cacheKey);
+    
+    if (cached) {
+      setCourses(cached);
+      return;
+    }
+
     try {
       const coursesCollection = collection(db, 'courses');
       const coursesSnapshot = await getDocs(coursesCollection);
       const coursesData = coursesSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      }));
-      setCourses(coursesData as Course[]);
+      })) as Course[];
+      setCourses(coursesData);
+      setSessionCache(cacheKey, coursesData);
     } catch (err) {
       console.error('Failed to load courses:', err);
     }
-  }, [setCourses]);
+  }, [getSessionCache, setSessionCache]);
 
   const fetchGroups = useCallback(async () => {
+    const cacheKey = 'superadmin_groups';
+    const cached = getSessionCache<Group[]>(cacheKey);
+    
+    if (cached) {
+      setGroups(cached);
+      return;
+    }
+
     try {
       const groupsCollection = collection(db, 'groups');
       const groupsSnapshot = await getDocs(groupsCollection);
       const groupsData = groupsSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      }));
+      })) as Group[];
       setGroups(groupsData);
+      setSessionCache(cacheKey, groupsData);
     } catch (err) {
       console.error('Failed to load groups:', err);
     }
-  }, [setGroups]);
+  }, [getSessionCache, setSessionCache]);
 
   // Pobierz ostatnie aktywności
   const fetchRecentActivities = useCallback(async () => {
@@ -261,9 +612,15 @@ function SuperAdminDashboardContent() {
   }, [user, users, courses, groups]);
 
   useEffect(() => {
-    fetchUsers();
-    fetchCourses();
-    fetchGroups();
+    setLoading(true);
+
+    Promise.all([
+      measureAsync('Superadmin:fetchUsers', fetchUsers),
+      measureAsync('Superadmin:fetchCourses', fetchCourses),
+      measureAsync('Superadmin:fetchGroups', fetchGroups),
+    ]).finally(() => {
+      setLoading(false);
+    });
   }, [fetchUsers, fetchCourses, fetchGroups]);
 
   // Funkcja do pobierania zgłoszeń błędów
@@ -421,7 +778,7 @@ function SuperAdminDashboardContent() {
     }
   }, [users, courses, groups, fetchRecentActivities]);
 
-  const setTeacherRole = async (email: string) => {
+  const setTeacherRole = useCallback(async (email: string) => {
     try {
       // Znajdź użytkownika po email w Firestore
       const { collection, query, where, getDocs, updateDoc, doc } = await import('firebase/firestore');
@@ -470,6 +827,7 @@ function SuperAdminDashboardContent() {
         setError('Błąd podczas ustawiania uprawnień Firebase Auth: ' + (authError instanceof Error ? authError.message : 'Unknown error'));
       }
       
+      invalidateCache();
       setTimeout(() => setSuccess(''), 5000);
       fetchUsers(); // Refresh the list
     } catch (err) {
@@ -477,9 +835,9 @@ function SuperAdminDashboardContent() {
       setError('Failed to set teacher role');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const setAdminRole = async (uid: string) => {
+  const setAdminRole = useCallback(async (uid: string) => {
     try {
       // Znajdź użytkownika po ID w Firestore
       const { updateDoc, doc } = await import('firebase/firestore');
@@ -505,6 +863,7 @@ function SuperAdminDashboardContent() {
         console.error('Error setting Firebase Auth custom claims:', authError);
       }
       
+      invalidateCache();
       setSuccess(`Successfully set user as admin`);
       setTimeout(() => setSuccess(''), 3000);
       fetchUsers(); // Refresh the list
@@ -513,9 +872,9 @@ function SuperAdminDashboardContent() {
       setError('Failed to set admin role');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const setStudentRole = async (uid: string) => {
+  const setStudentRole = useCallback(async (uid: string) => {
     try {
       // Znajdź użytkownika po ID w Firestore
       const { updateDoc, doc } = await import('firebase/firestore');
@@ -523,6 +882,7 @@ function SuperAdminDashboardContent() {
         role: 'student'
       });
       
+      invalidateCache();
       setSuccess(`Successfully set user as student`);
       setTimeout(() => setSuccess(''), 3000);
       fetchUsers(); // Refresh the list
@@ -531,14 +891,15 @@ function SuperAdminDashboardContent() {
       setError('Failed to set student role');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const setParentRole = async (uid: string) => {
+  const setParentRole = useCallback(async (uid: string) => {
     try {
       await updateDoc(doc(db, 'users', uid), {
         role: 'parent'
       });
       
+      invalidateCache();
       setSuccess(`Pomyślnie ustawiono użytkownika jako Rodzic`);
       setTimeout(() => setSuccess(''), 3000);
       fetchUsers(); // Refresh the list
@@ -547,14 +908,15 @@ function SuperAdminDashboardContent() {
       setError('Nie udało się ustawić roli Rodzic');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const approveUser = async (uid: string) => {
+  const approveUser = useCallback(async (uid: string) => {
     try {
       await updateDoc(doc(db, 'users', uid), {
         approved: true
       });
       
+      invalidateCache();
       setSuccess(`Użytkownik został zatwierdzony`);
       setTimeout(() => setSuccess(''), 3000);
       fetchUsers(); // Refresh the list
@@ -563,14 +925,15 @@ function SuperAdminDashboardContent() {
       setError('Nie udało się zatwierdzić użytkownika');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const rejectUser = async (uid: string) => {
+  const rejectUser = useCallback(async (uid: string) => {
     try {
       await updateDoc(doc(db, 'users', uid), {
         approved: false
       });
       
+      invalidateCache();
       setSuccess(`Użytkownik został odrzucony`);
       setTimeout(() => setSuccess(''), 3000);
       fetchUsers(); // Refresh the list
@@ -579,9 +942,9 @@ function SuperAdminDashboardContent() {
       setError('Nie udało się odrzucić użytkownika');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [invalidateCache, fetchUsers]);
 
-  const saveTeacherSpecialization = async () => {
+  const saveTeacherSpecialization = useCallback(async () => {
     if (!editingTeacher) return;
     
     try {
@@ -595,6 +958,7 @@ function SuperAdminDashboardContent() {
         specialization: specializationArray.length > 0 ? specializationArray : null
       });
       
+      invalidateCache();
       setSuccess(`Specjalizacja nauczyciela została zaktualizowana`);
       setTimeout(() => setSuccess(''), 3000);
       setShowEditTeacherSpecializationModal(false);
@@ -607,9 +971,9 @@ function SuperAdminDashboardContent() {
       setError('Nie udało się zapisać specjalizacji');
       setTimeout(() => setError(''), 3000);
     }
-  };
+  }, [editingTeacher, teacherInstructorType, teacherSpecialization, invalidateCache, fetchUsers]);
 
-  const deleteUser = async (uid: string) => {
+  const deleteUser = useCallback(async (uid: string) => {
     if (!confirm('Czy na pewno chcesz usunąć tego użytkownika? Ta operacja jest nieodwracalna.')) {
       return;
     }
@@ -652,7 +1016,7 @@ function SuperAdminDashboardContent() {
       setError('Nie udało się usunąć użytkownika: ' + (err instanceof Error ? err.message : 'Unknown error'));
       setTimeout(() => setError(''), 5000);
     }
-  };
+  }, [user, fetchUsers]);
 
 
 
@@ -751,6 +1115,7 @@ function SuperAdminDashboardContent() {
     }
   };
 
+
   const deleteCourse = async (courseId: string) => {
     if (!confirm('Czy na pewno chcesz usunąć ten kurs? Ta operacja jest nieodwracalna.')) {
       return;
@@ -759,6 +1124,7 @@ function SuperAdminDashboardContent() {
     try {
       const { deleteDoc, doc } = await import('firebase/firestore');
       await deleteDoc(doc(db, 'courses', courseId));
+      invalidateCache();
       setSuccess('Kurs został pomyślnie usunięty');
       fetchCourses(); // Refresh the list
     } catch (error) {
@@ -768,6 +1134,7 @@ function SuperAdminDashboardContent() {
   };
 
   const deleteGroup = async (groupId: string) => {
+    invalidateCache();
     if (!confirm('Czy na pewno chcesz usunąć tę grupę? Ta operacja jest nieodwracalna.')) {
       return;
     }
@@ -775,6 +1142,7 @@ function SuperAdminDashboardContent() {
     try {
       const { deleteDoc, doc } = await import('firebase/firestore');
       await deleteDoc(doc(db, 'groups', groupId));
+      invalidateCache();
       setGroupSuccess('Grupa została pomyślnie usunięta');
       fetchGroups(); // Refresh the list
     } catch (error) {
@@ -800,6 +1168,7 @@ function SuperAdminDashboardContent() {
       });
       
       setGroupSuccess('Grupa została pomyślnie utworzona');
+      invalidateCache();
       setNewGroupName('');
       setNewGroupDescription('');
       setShowCreateGroupModal(false);
@@ -897,6 +1266,7 @@ function SuperAdminDashboardContent() {
       
       await addDoc(collection(db, 'courses'), courseData);
       
+      invalidateCache();
       setSuccess('Kurs został pomyślnie utworzony');
       setNewCourseTitle('');
       setNewCourseYear('');
@@ -937,6 +1307,7 @@ function SuperAdminDashboardContent() {
       
       await addDoc(collection(db, 'users'), userData);
       
+      invalidateCache();
       setSuccess('Użytkownik został pomyślnie utworzony');
       setNewUserEmail('');
       setNewUserFirstName('');
@@ -1001,6 +1372,7 @@ function SuperAdminDashboardContent() {
       
       await updateDoc(doc(db, 'courses', editingCourse.id), courseData);
       
+      invalidateCache();
       setSuccess('Kurs został pomyślnie zaktualizowany');
       setShowEditCourseModal(false);
       setEditingCourse(null);
@@ -1067,16 +1439,49 @@ function SuperAdminDashboardContent() {
     }
   };
 
-  if (loading) {
+  // Map of edit specialization handlers - created before conditional return to maintain hook order
+  const editSpecializationHandlers = useMemo(() => {
+    const handlers: { [key: string]: (user: FirestoreUser) => void } = {};
+    paginatedUsers.forEach((u) => {
+      handlers[u.id] = (user: FirestoreUser) => {
+        setEditingTeacher(user);
+        const teacherDoc = doc(db, 'users', user.id);
+        getDoc(teacherDoc).then(docSnap => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setTeacherInstructorType(data.instructorType || '');
+            setTeacherSpecialization(Array.isArray(data.specialization) ? data.specialization.join(', ') : (data.specialization || ''));
+          }
+        });
+        setShowEditTeacherSpecializationModal(true);
+      };
+    });
+    return handlers;
+  }, [paginatedUsers]);
+
+  // Memoized handlers - MUSI być przed warunkowym return
+  const clearSearchHandler = useCallback(() => setSearchTerm(""), []);
+  const loadMoreUsersHandler = useCallback(() => setUsersPage((prev) => prev + 1), []);
+  const prevPendingUsersPageHandler = useCallback(() => setPendingUsersPage(p => Math.max(1, p - 1)), []);
+  const nextPendingUsersPageHandler = useCallback(() => setPendingUsersPage(p => Math.min(totalPendingUsersPages, p + 1)), [totalPendingUsersPages]);
+
+  // Memoized user count display - MUSI być przed warunkowym return
+  const userCountDisplay = useMemo(() => {
+    const filteredCount = filteredUsers.length;
+    const displayedCount = Math.min(filteredCount, usersPage * usersPageSize);
     return (
-      <div className="flex items-center justify-center min-h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4067EC]"></div>
+      <div className="mb-4 text-sm text-gray-600 dark:text-white/70">
+        Wyświetlono{' '}
+        <span className="font-semibold text-blue-600 dark:text-blue-400">
+          {displayedCount}
+        </span>{' '}
+        z <span className="font-semibold">{filteredCount}</span> dopasowanych użytkowników
       </div>
     );
-  }
+  }, [filteredUsers.length, usersPage, usersPageSize]);
 
-  // Karty statystyk
-  const statCards: StatCard[] = [
+  // Memoized stat cards - MUSI być przed warunkowym return, aby zachować kolejność hooków
+  const statCards: StatCard[] = useMemo(() => [
     {
       title: "Wszyscy Użytkownicy",
       value: users.length.toString(),
@@ -1086,7 +1491,7 @@ function SuperAdminDashboardContent() {
     },
     {
       title: "Oczekujący na zatwierdzenie", 
-      value: users.filter(u => !u.approved).length.toString(),
+      value: pendingUsersCount.toString(),
       description: "użytkowników czeka",
       icon: Clock,
       color: "bg-yellow-500"
@@ -1105,7 +1510,15 @@ function SuperAdminDashboardContent() {
       icon: Group,
       color: "bg-purple-500"
     },
-  ];
+  ], [users.length, pendingUsersCount, courses.length, groups.length]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4067EC]"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-purple-900 dark:to-slate-900 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
@@ -1161,7 +1574,7 @@ function SuperAdminDashboardContent() {
           <nav className="space-y-2">
             {[
               { id: "users", label: "Użytkownicy", icon: Users, color: "bg-[#4067EC]" },
-              { id: "pending", label: `Oczekujący (${users.filter(u => !u.approved).length})`, icon: Clock, color: "bg-yellow-500" },
+              { id: "pending", label: `Oczekujący (${pendingUsersCount})`, icon: Clock, color: "bg-yellow-500" },
               { id: "groups", label: "Grupy", icon: Group, color: "bg-purple-500" },
               { id: "courses", label: "Kursy", icon: BookOpen, color: "bg-green-500" },
               { id: "assignments", label: "Przypisania", icon: ClipboardList, color: "bg-indigo-500" },
@@ -1278,8 +1691,8 @@ function SuperAdminDashboardContent() {
                     </div>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
                       <div className="text-xs sm:text-sm text-gray-600 dark:text-white/70 text-center sm:text-left">
-                        <span className="font-medium text-green-600 dark:text-green-300">{users.filter(u => u.approved).length}</span> zatwierdzonych, 
-                        <span className="font-medium text-yellow-600 dark:text-yellow-300"> {users.filter(u => !u.approved).length}</span> oczekuje
+                        <span className="font-medium text-green-600 dark:text-green-300">{approvedUsersCount}</span> zatwierdzonych, 
+                        <span className="font-medium text-yellow-600 dark:text-yellow-300"> {pendingUsersCount}</span> oczekuje
                       </div>
                       <button 
                         onClick={() => setShowCreateUserModal(true)}
@@ -1291,28 +1704,8 @@ function SuperAdminDashboardContent() {
                     </div>
                   </div>
                   
-                  {/* Licznik wyników */}
-                  {(() => {
-                    const filteredCount = users.filter(user => {
-                      if (searchTerm) {
-                        const search = searchTerm.toLowerCase();
-                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
-                        const email = (user.email || '').toLowerCase();
-                        if (!fullName.includes(search) && !email.includes(search)) return false;
-                      }
-                      if (userRoleFilter !== 'all' && user.role !== userRoleFilter) return false;
-                      if (userStatusFilter !== 'all') {
-                        if (userStatusFilter === 'approved' && !user.approved) return false;
-                        if (userStatusFilter === 'pending' && user.approved) return false;
-                      }
-                      return true;
-                    }).length;
-                    return (
-                      <div className="mb-4 text-sm text-gray-600 dark:text-white/70">
-                        Wyświetlono <span className="font-semibold text-blue-600 dark:text-blue-400">{filteredCount}</span> z <span className="font-semibold">{users.length}</span> użytkowników
-                      </div>
-                    );
-                  })()}
+                  {/* Licznik wyników - memoized */}
+                  {userCountDisplay}
 
                   {/* Wyszukiwarka i Filtry */}
                   <div className="mb-6 space-y-4">
@@ -1328,7 +1721,7 @@ function SuperAdminDashboardContent() {
                       />
                       {searchTerm && (
                         <button
-                          onClick={() => setSearchTerm("")}
+                          onClick={clearSearchHandler}
                           className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-white/50 hover:text-gray-600 dark:hover:text-white transition-colors"
                         >
                           <X className="w-5 h-5" />
@@ -1394,221 +1787,45 @@ function SuperAdminDashboardContent() {
                   
                   {/* Lista użytkowników */}
                   <div className="space-y-3">
-                    {users
-                      .filter(user => {
-                        // Filtr po wyszukiwarce (nazwa/email)
-                        if (searchTerm) {
-                          const search = searchTerm.toLowerCase();
-                          const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
-                          const email = (user.email || '').toLowerCase();
-                          if (!fullName.includes(search) && !email.includes(search)) {
-                            return false;
-                          }
-                        }
-
-                        // Filtr po roli
-                        if (userRoleFilter !== 'all' && user.role !== userRoleFilter) {
-                          return false;
-                        }
-
-                        // Filtr po statusie
-                        if (userStatusFilter !== 'all') {
-                          if (userStatusFilter === 'approved' && !user.approved) {
-                            return false;
-                          }
-                          if (userStatusFilter === 'pending' && user.approved) {
-                            return false;
-                          }
-                        }
-
-                        return true;
-                      })
-                      .map((user) => {
-                        const roleColors: { [key: string]: string } = {
-                          'admin': 'bg-red-500',
-                          'teacher': 'bg-[#4067EC]',
-                          'parent': 'bg-purple-500',
-                          'student': 'bg-green-500'
-                        };
+                    {paginatedUsers.map((user) => {
                         const roleColor = roleColors[user.role || 'student'] || 'bg-gray-500';
+                        const roleLabel = roleLabels[user.role || 'student'] || '🎓 Uczeń';
                         return (
-                          <div 
-                            key={user.id} 
-                            className="group bg-white dark:bg-white/10 backdrop-blur-xl rounded-xl p-4 border border-gray-200 dark:border-white/20 hover:border-gray-300 dark:hover:border-white/40 transition-all duration-300 hover:shadow-xl"
-                          >
-                            <div className="flex items-center justify-between gap-4">
-                              {/* Lewa strona - informacje o użytkowniku */}
-                              <div className="flex items-center gap-4 flex-1 min-w-0">
-                                <div className={`w-12 h-12 ${roleColor} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
-                                  <span className="text-white font-bold text-lg">
-                                    {user.firstName?.[0] || ''}{user.lastName?.[0] || ''}
-                                  </span>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-3 mb-1">
-                                    <h3 className="font-bold text-gray-900 dark:text-white text-lg truncate">
-                                      {user.firstName} {user.lastName}
-                                    </h3>
-                                    {user.approved ? (
-                                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-500/30 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-200 rounded-full text-xs font-semibold flex-shrink-0">
-                                        ✅ Zatwierdzony
-                                      </span>
-                                    ) : (
-                                      <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-500/30 border border-yellow-300 dark:border-yellow-500/50 text-yellow-700 dark:text-yellow-200 rounded-full text-xs font-semibold flex-shrink-0">
-                                        ⏳ Oczekuje
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-gray-600 dark:text-white/70 text-sm truncate">{user.email}</p>
-                                  <div className="mt-1">
-                                    <span className={`inline-flex items-center px-2 py-1 ${roleColor} text-white rounded-lg text-xs font-semibold`}>
-                                      {user.role === 'admin' ? '👑 Admin' : 
-                                       user.role === 'teacher' ? '👨‍🏫 Nauczyciel' : 
-                                       user.role === 'parent' ? '👨‍👩‍👧 Rodzic' : '🎓 Uczeń'}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Prawa strona - akcje */}
-                              <div className="flex items-center gap-2 flex-wrap justify-end">
-                                {!user.approved ? (
-                                  <button 
-                                    onClick={() => approveUser(user.id)}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
-                                    title="Zatwierdź użytkownika"
-                                  >
-                                    <CheckCircle className="h-4 w-4" />
-                                    Zatwierdź
-                                  </button>
-                                ) : (
-                                  <button 
-                                    onClick={() => rejectUser(user.id)}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg hover:shadow-md transition-all duration-200"
-                                    title="Odrzuć użytkownika"
-                                  >
-                                    <XCircle className="h-4 w-4" />
-                                    Odrzuć
-                                  </button>
-                                )}
-                                
-                                {user.role !== 'teacher' && (
-                                  <button 
-                                    onClick={() => setTeacherRole(user.email || '')}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                    title="Ustaw jako nauczyciela"
-                                  >
-                                    <GraduationCap className="h-4 w-4" />
-                                    Nauczyciel
-                                  </button>
-                                )}
-                                {user.role !== 'admin' && (
-                                  <button 
-                                    onClick={() => setAdminRole(user.id)}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                    title="Ustaw jako admina"
-                                  >
-                                    <Shield className="h-4 w-4" />
-                                    Admin
-                                  </button>
-                                )}
-                                {user.role !== 'parent' && (
-                                  <button 
-                                    onClick={() => setParentRole(user.id)}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                    title="Ustaw jako rodzica"
-                                  >
-                                    <Users className="h-4 w-4" />
-                                    Rodzic
-                                  </button>
-                                )}
-                                {user.role === 'admin' && (
-                                  <button 
-                                    onClick={() => setTeacherRole(user.email || '')}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                    title="Ustaw jako nauczyciela"
-                                  >
-                                    <GraduationCap className="h-4 w-4" />
-                                    Nauczyciel
-                                  </button>
-                                )}
-                                {user.role === 'teacher' && (
-                                  <>
-                                    <button 
-                                      onClick={() => setStudentRole(user.id)}
-                                      className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                      title="Ustaw jako ucznia"
-                                    >
-                                      <Users className="h-4 w-4" />
-                                      Uczeń
-                                    </button>
-                                    <button 
-                                      onClick={() => {
-                                        setEditingTeacher(user);
-                                        const teacherDoc = doc(db, 'users', user.id);
-                                        getDoc(teacherDoc).then(docSnap => {
-                                          if (docSnap.exists()) {
-                                            const data = docSnap.data();
-                                            setTeacherInstructorType(data.instructorType || '');
-                                            setTeacherSpecialization(Array.isArray(data.specialization) ? data.specialization.join(', ') : (data.specialization || ''));
-                                          }
-                                        });
-                                        setShowEditTeacherSpecializationModal(true);
-                                      }}
-                                      className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-700 dark:text-white border border-gray-300 dark:border-white/30 rounded-lg transition-all duration-200"
-                                      title="Edytuj specjalizację"
-                                    >
-                                      <Edit className="h-4 w-4" />
-                                      Spec.
-                                    </button>
-                                  </>
-                                )}
-                                <button 
-                                  onClick={() => deleteUser(user.id)}
-                                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all duration-200 hover:shadow-md"
-                                  title="Usuń użytkownika"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  Usuń
-                                </button>
-                              </div>
-                            </div>
-                          </div>
+                          <UserCard
+                            key={user.id}
+                            user={user}
+                            roleColor={roleColor}
+                            roleLabel={roleLabel}
+                            onApprove={approveUser}
+                            onReject={rejectUser}
+                            onSetTeacher={setTeacherRole}
+                            onSetAdmin={setAdminRole}
+                            onSetParent={setParentRole}
+                            onSetStudent={setStudentRole}
+                            onEditSpecialization={editSpecializationHandlers[user.id] || (() => {})}
+                            onDelete={deleteUser}
+                          />
                         );
                       })}
-                    {users.filter(user => {
-                      // Filtr po wyszukiwarce (nazwa/email)
-                      if (searchTerm) {
-                        const search = searchTerm.toLowerCase();
-                        const fullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase();
-                        const email = (user.email || '').toLowerCase();
-                        if (!fullName.includes(search) && !email.includes(search)) {
-                          return false;
-                        }
-                      }
-
-                      // Filtr po roli
-                      if (userRoleFilter !== 'all' && user.role !== userRoleFilter) {
-                        return false;
-                      }
-
-                      // Filtr po statusie
-                      if (userStatusFilter !== 'all') {
-                        if (userStatusFilter === 'approved' && !user.approved) {
-                          return false;
-                        }
-                        if (userStatusFilter === 'pending' && user.approved) {
-                          return false;
-                        }
-                      }
-
-                      return true;
-                    }).length === 0 && (
+                    {filteredUsers.length === 0 && (
                       <div className="text-center py-12 text-gray-500 dark:text-white/50">
                         <p className="text-lg">Brak użytkowników do wyświetlenia</p>
-                        {(searchTerm || userRoleFilter !== 'all' || userStatusFilter !== 'all') && (
+                        {(debouncedSearchTerm || userRoleFilter !== 'all' || userStatusFilter !== 'all') && (
                           <p className="text-sm mt-2">Spróbuj zmienić kryteria wyszukiwania lub filtry</p>
                         )}
+                      </div>
+                    )}
+                    
+                    {/* Load More button - tylko jeśli są jeszcze użytkownicy do załadowania */}
+                    {filteredUsers.length > paginatedUsers.length && (
+                      <div className="flex justify-center mt-6">
+                        <button
+                          type="button"
+                          onClick={loadMoreUsersHandler}
+                          className="px-6 py-3 text-sm font-semibold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-800 dark:text-white rounded-xl border border-gray-300 dark:border-white/30 transition-all duration-200 hover:shadow-md"
+                        >
+                          Załaduj więcej użytkowników ({filteredUsers.length - paginatedUsers.length} pozostało)
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1622,7 +1839,7 @@ function SuperAdminDashboardContent() {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-semibold text-gray-900">Oczekujący na zatwierdzenie</h2>
                 <div className="text-sm text-gray-600">
-                  <span className="font-medium text-yellow-600">{users.filter(u => !u.approved).length}</span> użytkowników oczekuje na zatwierdzenie
+                  <span className="font-medium text-yellow-600">{pendingUsersCount}</span> użytkowników oczekuje na zatwierdzenie
                 </div>
               </div>
               {success && (
@@ -1657,7 +1874,7 @@ function SuperAdminDashboardContent() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {users.filter(u => !u.approved).map((user) => (
+                    {paginatedPendingUsers.map((user) => (
                       <tr key={user.id} className="bg-yellow-50">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">
@@ -1711,9 +1928,34 @@ function SuperAdminDashboardContent() {
                     ))}
                   </tbody>
                 </table>
-                {users.filter(u => !u.approved).length === 0 && (
+                {pendingUsersList.length === 0 && (
                   <div className="text-center py-8 text-gray-500">
                     Wszyscy użytkownicy zostali zatwierdzeni! 🎉
+                  </div>
+                )}
+                
+                {/* Pagination for pending users */}
+                {totalPendingUsersPages > 1 && (
+                  <div className="mt-6 flex justify-center items-center gap-2 px-6">
+                    <button
+                      onClick={prevPendingUsersPageHandler}
+                      disabled={pendingUsersPage <= 1}
+                      className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Poprzednia
+                    </button>
+                    
+                    <span className="px-4 py-2 text-sm text-gray-700">
+                      Strona {pendingUsersPage} z {totalPendingUsersPages} ({pendingUsersList.length} oczekujących)
+                    </span>
+                    
+                    <button
+                      onClick={nextPendingUsersPageHandler}
+                      disabled={pendingUsersPage >= totalPendingUsersPages}
+                      className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Następna
+                    </button>
                   </div>
                 )}
               </div>
@@ -1758,7 +2000,7 @@ function SuperAdminDashboardContent() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {groups.map((group) => (
+                    {paginatedGroups.map((group) => (
                       <tr key={group.id}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{group.name}</div>
@@ -1797,6 +2039,31 @@ function SuperAdminDashboardContent() {
                   </tbody>
                 </table>
               </div>
+              
+              {/* Pagination for groups */}
+              {totalGroupsPages > 1 && (
+                <div className="mt-6 flex justify-center items-center gap-2 px-6">
+                  <button
+                    onClick={() => setGroupsPage(p => Math.max(1, p - 1))}
+                    disabled={groupsPage <= 1}
+                    className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Poprzednia
+                  </button>
+                  
+                  <span className="px-4 py-2 text-sm text-gray-700">
+                    Strona {groupsPage} z {totalGroupsPages} ({groups.length} grup)
+                  </span>
+                  
+                  <button
+                    onClick={() => setGroupsPage(p => Math.min(totalGroupsPages, p + 1))}
+                    disabled={groupsPage >= totalGroupsPages}
+                    className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Następna
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1844,7 +2111,7 @@ function SuperAdminDashboardContent() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {courses.map((course) => (
+                    {paginatedCourses.map((course) => (
                       <tr key={course.id}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">
@@ -1866,8 +2133,10 @@ function SuperAdminDashboardContent() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-500">
                             {course.teacherEmail ? (
-                              users.find(u => u.email === course.teacherEmail)?.firstName + ' ' + 
-                              users.find(u => u.email === course.teacherEmail)?.lastName
+                              (() => {
+                                const teacher = usersMap.get(course.teacherEmail || '');
+                                return teacher ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() : 'Not assigned';
+                              })()
                             ) : 'Not assigned'}
                           </div>
                         </td>
@@ -1897,6 +2166,31 @@ function SuperAdminDashboardContent() {
                   </tbody>
                 </table>
               </div>
+              
+              {/* Pagination for courses */}
+              {totalCoursesPages > 1 && (
+                <div className="mt-6 flex justify-center items-center gap-2 px-6">
+                  <button
+                    onClick={() => setCoursesPage(p => Math.max(1, p - 1))}
+                    disabled={coursesPage <= 1}
+                    className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Poprzednia
+                  </button>
+                  
+                  <span className="px-4 py-2 text-sm text-gray-700">
+                    Strona {coursesPage} z {totalCoursesPages} ({courses.length} kursów)
+                  </span>
+                  
+                  <button
+                    onClick={() => setCoursesPage(p => Math.min(totalCoursesPages, p + 1))}
+                    disabled={coursesPage >= totalCoursesPages}
+                    className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Następna
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1929,9 +2223,12 @@ function SuperAdminDashboardContent() {
                         onChange={(e) => setSelectedStudentForAssignment(e.target.value)}
                       >
                         <option value="">Select a student...</option>
-                        {users.filter(u => u.role === 'student').map((user: FirestoreUser) => (
+                        {studentsForSelect.map((user: FirestoreUser) => (
                           <option key={user.id} value={user.email}>{user.firstName || ''} {user.lastName || ''}</option>
                         ))}
+                        {users.filter(u => u.role === 'student').length > 100 && (
+                          <option disabled>... i {users.filter(u => u.role === 'student').length - 100} więcej (użyj wyszukiwarki)</option>
+                        )}
                       </select>
                     </div>
                     <div>
@@ -1942,9 +2239,12 @@ function SuperAdminDashboardContent() {
                         onChange={(e) => setSelectedCourseForAssignment(e.target.value)}
                       >
                         <option value="">Select a course...</option>
-                        {courses.map(course => (
+                        {coursesForSelect.map(course => (
                           <option key={course.id} value={course.id}>{course.title}</option>
                         ))}
+                        {courses.length > 100 && (
+                          <option disabled>... i {courses.length - 100} więcej</option>
+                        )}
                       </select>
                     </div>
                     <button 
@@ -1957,8 +2257,8 @@ function SuperAdminDashboardContent() {
                 </div>
                 <div className="border rounded-lg p-4">
                   <h3 className="text-lg font-medium text-gray-800 mb-4">Current Assignments</h3>
-                  <div className="space-y-4">
-                    {courses.map(course => (
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {coursesForSelect.map(course => (
                       <div key={course.id} className="border-b pb-4">
                         <h4 className="font-medium text-gray-800">{course.title}</h4>
                         <p className="text-sm text-gray-500">{course.assignedUsers ? course.assignedUsers.length : 0} students assigned</p>
@@ -1967,6 +2267,11 @@ function SuperAdminDashboardContent() {
                         </button>
                       </div>
                     ))}
+                    {courses.length > 100 && (
+                      <p className="text-sm text-gray-500 text-center pt-2">
+                        ... i {courses.length - 100} więcej kursów
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2079,7 +2384,7 @@ function SuperAdminDashboardContent() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {bugReports.map((report) => {
+                      {paginatedBugReports.map((report) => {
                     const statusColors = {
                       new: 'bg-blue-100 text-blue-800 border-blue-200',
                       in_progress: 'bg-yellow-100 text-yellow-800 border-yellow-200',
@@ -2175,6 +2480,31 @@ function SuperAdminDashboardContent() {
                       </div>
                       );
                     })}
+                    
+                    {/* Pagination for bug reports */}
+                    {totalBugReportsPages > 1 && (
+                      <div className="mt-6 flex justify-center items-center gap-2">
+                        <button
+                          onClick={() => setBugReportsPage(p => Math.max(1, p - 1))}
+                          disabled={bugReportsPage <= 1}
+                          className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Poprzednia
+                        </button>
+                        
+                        <span className="px-4 py-2 text-sm text-gray-700">
+                          Strona {bugReportsPage} z {totalBugReportsPages} ({bugReports.length} zgłoszeń)
+                        </span>
+                        
+                        <button
+                          onClick={() => setBugReportsPage(p => Math.min(totalBugReportsPages, p + 1))}
+                          disabled={bugReportsPage >= totalBugReportsPages}
+                          className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Następna
+                        </button>
+                      </div>
+                    )}
                     </div>
                   )}
                 </div>
@@ -2327,7 +2657,7 @@ function SuperAdminDashboardContent() {
                       required
                     >
                       <option value="">Wybierz nauczyciela...</option>
-                      {users.filter(u => u.role === 'teacher').map((user: FirestoreUser) => (
+                      {teachersList.map((user: FirestoreUser) => (
                         <option key={user.id} value={user.email}>
                           {user.firstName || ''} {user.lastName || ''} ({user.email})
                         </option>
@@ -2634,7 +2964,7 @@ function SuperAdminDashboardContent() {
                       onChange={(e) => setEditCourseTeacher(e.target.value)}
                     >
                       <option value="">Select a teacher...</option>
-                      {users.filter(u => u.role === 'teacher').map((user: FirestoreUser) => (
+                      {teachersList.map((user: FirestoreUser) => (
                         <option key={user.id} value={user.email}>
                           {user.firstName || ''} {user.lastName || ''} ({user.email})
                         </option>
@@ -2652,7 +2982,7 @@ function SuperAdminDashboardContent() {
                       <div className="space-y-2">
                         {editCourseStudents.length > 0 ? (
                           editCourseStudents.map((studentEmail, index) => {
-                            const student = users.find(u => u.email === studentEmail);
+                            const student = usersMap.get(studentEmail || '');
                             return (
                               <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
                                 <span className="text-sm">
@@ -2818,11 +3148,14 @@ function SuperAdminDashboardContent() {
                     onChange={(e) => handleAddMember(selectedGroup?.id || '', e.target.value)}
                   >
                     <option value="">Select a user...</option>
-                    {users.map(user => (
+                    {usersForSelect.map(user => (
                       <option key={user.id} value={user.id}>
                         {user.firstName} {user.lastName} ({user.role === 'teacher' ? 'Teacher' : 'Student'})
                       </option>
                     ))}
+                    {users.length > 100 && (
+                      <option disabled>... i {users.length - 100} więcej</option>
+                    )}
                   </select>
                 </div>
                 <div className="flex justify-end mt-4">

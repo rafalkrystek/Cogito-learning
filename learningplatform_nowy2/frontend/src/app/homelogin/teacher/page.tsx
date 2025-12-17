@@ -6,6 +6,7 @@ import Link from "next/link";
 import { db } from '@/config/firebase';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import TutorManagement from '@/components/TutorManagement';
+import { measureAsync } from '@/utils/perf';
 import {
   BookOpen,
   Users,
@@ -18,6 +19,40 @@ import {
   Clock,
   UserPlus
 } from 'lucide-react';
+
+// Lekki cache w sessionStorage tylko dla dashboardu nauczyciela
+const DASHBOARD_CACHE_TTL_MS = 60 * 1000; // 60s – ograniczamy spam do Firestore
+
+interface SessionCacheEntry<T> {
+  timestamp: number;
+  data: T;
+}
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SessionCacheEntry<T>;
+    if (!parsed.timestamp || Date.now() - parsed.timestamp > DASHBOARD_CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    const entry: SessionCacheEntry<T> = { timestamp: Date.now(), data };
+    sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Błędy cache są niekrytyczne
+  }
+}
 
 interface StatCard {
   title: string;
@@ -67,6 +102,15 @@ export default function TeacherDashboard() {
   const [activeTab, setActiveTab] = useState<string>('all');
   const isAdmin = user?.role === 'admin';
 
+  // Helper do chunkowania tablic dla zapytań z operatorem "in"
+  const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  };
+
   // Memoizuj filtrowane aktywności
   const filteredActivities = useMemo(() => {
     const filtered = recentActivities.filter(activity => {
@@ -95,9 +139,16 @@ export default function TeacherDashboard() {
     { id: 'course', label: 'Kursy', icon: '📚', count: recentActivities.filter(a => a.type === 'course').length }
   ], [recentActivities]);
 
-  // Pobierz statystyki - zoptymalizowane
+  // Pobierz statystyki - zoptymalizowane + cache w sessionStorage
   const fetchStats = useCallback(async () => {
     if (!user?.email || !user?.uid) return;
+
+    const cacheKey = `teacher_dashboard_stats_${user.uid}`;
+    const cached = getSessionCache<typeof stats>(cacheKey);
+    if (cached) {
+      setStats(cached);
+      return;
+    }
     
     try {
       // Pobierz kursy nauczyciela - użyj query zamiast pobierania wszystkich
@@ -124,21 +175,44 @@ export default function TeacherDashboard() {
           course.assignedUsers.forEach(userId => allAssignedUsers.add(userId));
         }
       });
-      
-      // Pobierz dane uczniów - batch query zamiast pętli
-      const studentsCollection = collection(db, 'users');
-      const studentQueries = Array.from(allAssignedUsers).map(userId => {
-        if (userId.includes('@')) {
-          return getDocs(query(studentsCollection, where("email", "==", userId), limit(1)));
-        } else {
-          return getDocs(query(studentsCollection, where("uid", "==", userId), limit(1)));
+
+      let studentsCount = 0;
+
+      if (allAssignedUsers.size > 0) {
+        // Zamiast 1 zapytania na ucznia – łączymy je w zapytania z operatorem "in" po 10 ID
+        const studentsCollection = collection(db, 'users');
+        const emails: string[] = [];
+        const uids: string[] = [];
+
+        allAssignedUsers.forEach(id => {
+          if (id.includes('@')) {
+            emails.push(id);
+          } else {
+            uids.push(id);
+          }
+        });
+
+        const studentQueries: Array<Promise<Awaited<ReturnType<typeof getDocs>>>> = [];
+
+        chunkArray(emails, 10).forEach(chunk => {
+          studentQueries.push(getDocs(query(studentsCollection, where('email', 'in', chunk))));
+        });
+        chunkArray(uids, 10).forEach(chunk => {
+          studentQueries.push(getDocs(query(studentsCollection, where('uid', 'in', chunk))));
+        });
+
+        if (studentQueries.length > 0) {
+          const studentSnapshots = await Promise.all(studentQueries);
+          const studentsMap = new Map<string, Student>();
+          studentSnapshots.forEach(snapshot => {
+            snapshot.docs.forEach(doc => {
+              const studentData = doc.data() as Student;
+              studentsMap.set(doc.id, { ...studentData, uid: doc.id });
+            });
+          });
+          studentsCount = studentsMap.size;
         }
-      });
-      
-      const studentSnapshots = await Promise.all(studentQueries);
-      const studentsData: Student[] = studentSnapshots
-        .filter(snapshot => !snapshot.empty)
-        .map(snapshot => snapshot.docs[0].data() as Student);
+      }
       
       // Oblicz średnią ocen z quizów - tylko dla kursów nauczyciela, z limitem
       let totalQuizScore = 0;
@@ -172,11 +246,14 @@ export default function TeacherDashboard() {
       const averageGrade = quizCount > 0 ? totalQuizScore / quizCount : 4.2;
       const clampedAverage = Math.max(0, Math.min(10, averageGrade));
       
-      setStats({
+      const newStats = {
         courses: courses.length,
-        students: studentsData.length,
+        students: studentsCount,
         averageGrade: Math.round(clampedAverage * 10) / 10
-      });
+      };
+
+      setStats(newStats);
+      setSessionCache(cacheKey, newStats);
       
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -365,7 +442,10 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (user?.email) {
       console.log('🔄 useEffect triggered, fetching stats and activities...');
-      Promise.all([fetchStats(), fetchRecentActivities()]).finally(() => {
+      Promise.all([
+        measureAsync('TeacherDashboard:fetchStats', fetchStats),
+        measureAsync('TeacherDashboard:fetchRecentActivities', fetchRecentActivities),
+      ]).finally(() => {
         setLoading(false);
         console.log('✅ Stats and activities loaded');
       });

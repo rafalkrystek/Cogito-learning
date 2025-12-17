@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { db, auth } from '@/config/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove, serverTimestamp, getDoc, query, where, limit } from 'firebase/firestore';
+import { measureAsync } from '@/utils/perf';
 
 interface Class {
   id: string;
@@ -93,85 +94,94 @@ export default function ClassesPage() {
   });
 
   const fetchClasses = useCallback(async () => {
-    if (!user) {
-      console.log('❌ fetchClasses - brak użytkownika');
+    if (!user?.uid) {
       return;
     }
-    
-    console.log('🔍 fetchClasses - rozpoczynam pobieranie klas dla nauczyciela:', user.uid);
-    
+
     try {
       const classesRef = collection(db, 'classes');
-      const classesSnapshot = await getDocs(classesRef);
-      
-      console.log('🔍 fetchClasses - pobrano dokumenty klas:', classesSnapshot.docs.length);
-      
-      // Loguj wszystkie klasy w bazie
-      classesSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        console.log(`📚 Klasa: ${data.name || 'Brak nazwy'}, teacherId: ${data.teacherId}, nauczyciel: ${user.uid}`);
-      });
-      
-      const classesData = classesSnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Class))
-        .filter(cls => cls.is_active); // Pokaż tylko aktywne klasy
-      
-      console.log('🔍 fetchClasses - znalezione klasy dla nauczyciela:', classesData.length);
-      console.log('🔍 fetchClasses - klasy:', classesData);
-      
+      const classesQuery = query(
+        classesRef,
+        where('teacher_id', '==', user.uid),
+        where('is_active', '!=', false),
+        limit(100)
+      );
+
+      const classesSnapshot = await getDocs(classesQuery);
+
+      const classesData = classesSnapshot.docs.map(
+        (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Class)
+      );
+
       setClasses(classesData);
     } catch (error) {
       console.error('❌ Error fetching classes:', error);
       setError('Wystąpił błąd podczas pobierania klas.');
-    } finally {
-      setLoading(false);
     }
   }, [user]);
 
-  const fetchStudents = async () => {
+  const fetchStudents = useCallback(async () => {
     try {
       const usersRef = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersRef);
-      
-      const studentsData = usersSnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Student))
-        .filter(user => user.role === 'student');
-      
+      const studentsQuery = query(usersRef, where('role', '==', 'student'));
+      const usersSnapshot = await getDocs(studentsQuery);
+
+      const studentsData = usersSnapshot.docs.map(
+        (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Student)
+      );
+
       setStudents(studentsData);
     } catch (error) {
       console.error('Error fetching students:', error);
     }
-  };
+  }, []);
 
-  const fetchCourses = async () => {
+  const fetchCourses = useCallback(async () => {
+    if (!user?.email) return;
+
     try {
       const coursesRef = collection(db, 'courses');
-      const coursesSnapshot = await getDocs(coursesRef);
-      
-      // Pobierz wszystkie kursy, nie tylko te utworzone przez nauczyciela
-      const coursesData = coursesSnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Course));
-      
-      console.log('🔍 fetchCourses - pobrano kursów:', coursesData.length);
-      console.log('🔍 fetchCourses - kursy:', coursesData.map(c => c.title));
-      
-      setCourses(coursesData);
+
+      // Pobierz kursy powiązane z nauczycielem (jako twórca lub przypisany nauczyciel)
+      const [createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
+        getDocs(query(coursesRef, where('created_by', '==', user.email))),
+        getDocs(query(coursesRef, where('teacherEmail', '==', user.email)))
+      ]);
+
+      const map = new Map<string, Course>();
+
+      createdBySnapshot.docs.forEach((docSnap) => {
+        map.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Course);
+      });
+
+      teacherEmailSnapshot.docs.forEach((docSnap) => {
+        if (!map.has(docSnap.id)) {
+          map.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Course);
+        }
+      });
+
+      setCourses(Array.from(map.values()));
     } catch (error) {
       console.error('Error fetching courses:', error);
     }
-  };
+  }, [user?.email]);
 
   useEffect(() => {
-    console.log('🔍 useEffect - user changed:', user);
-    if (user) {
-      console.log('🔍 useEffect - user ma UID, wywołuję fetchClasses, fetchStudents i fetchCourses');
-      fetchClasses();
-      fetchStudents();
-      fetchCourses();
-    } else {
-      console.log('🔍 useEffect - brak użytkownika');
+    if (!user?.uid) {
+      setLoading(false);
+      return;
     }
-  }, [user, fetchClasses]);
+
+    setLoading(true);
+
+    Promise.all([
+      measureAsync('TeacherClasses:fetchClasses', fetchClasses),
+      measureAsync('TeacherClasses:fetchStudents', fetchStudents),
+      measureAsync('TeacherClasses:fetchCourses', fetchCourses),
+    ]).finally(() => {
+      setLoading(false);
+    });
+  }, [user?.uid, fetchClasses, fetchStudents, fetchCourses]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -855,15 +865,14 @@ export default function ClassesPage() {
     setShowEditModal(true);
   };
 
-  const filteredClasses = classes.filter(cls =>
-    cls.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    cls.grade_level.toString().includes(searchTerm.toLowerCase()) ||
-    cls.subject.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  console.log('🔍 Render - classes state:', classes);
-  console.log('🔍 Render - filteredClasses:', filteredClasses);
-  console.log('🔍 Render - searchTerm:', searchTerm);
+  const filteredClasses = classes.filter((cls) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      cls.name.toLowerCase().includes(term) ||
+      cls.grade_level.toString().includes(term) ||
+      (cls.subject || '').toLowerCase().includes(term)
+    );
+  });
 
   if (loading) {
     return (
