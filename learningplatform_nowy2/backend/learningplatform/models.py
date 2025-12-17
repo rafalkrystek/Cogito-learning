@@ -98,6 +98,8 @@ class Quiz(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     firebase_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     max_attempts = models.PositiveIntegerField(default=1, help_text='Maximum number of attempts allowed for this quiz')
+    start_time = models.DateTimeField(null=True, blank=True, help_text='When the quiz becomes available')
+    submission_deadline = models.DateTimeField(null=True, blank=True, help_text='Deadline for quiz submission')
 
     class Meta:
         ordering = ['-created_at']

@@ -88,7 +88,7 @@ class QuizSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Quiz
-        fields = ['id', 'firebase_id', 'title', 'description', 'subject', 'course_id', 'course_title', 'questions', 'created_at', 'created_by', 'max_attempts']
+        fields = ['id', 'firebase_id', 'title', 'description', 'subject', 'course_id', 'course_title', 'questions', 'created_at', 'created_by', 'max_attempts', 'start_time', 'submission_deadline']
         read_only_fields = ['created_at', 'created_by']
 
     def create(self, validated_data):
@@ -105,6 +105,18 @@ class QuizSerializer(serializers.ModelSerializer):
                 "You can only create quizzes for your own courses"
             )
         return course
+    
+    def validate(self, data):
+        start_time = data.get('start_time')
+        submission_deadline = data.get('submission_deadline')
+        
+        if start_time and submission_deadline:
+            if submission_deadline <= start_time:
+                raise serializers.ValidationError({
+                    'submission_deadline': 'Deadline must be later than start time'
+                })
+        
+        return data
 
 class QuestionResponseSerializer(serializers.ModelSerializer):
     class Meta:
