@@ -3,14 +3,43 @@
 // Force dynamic rendering to prevent SSR issues with client-side hooks
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useParams } from 'next/navigation';
 import { db } from '@/config/firebase';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
-import { ArrowLeft, Clock, CheckCircle, XCircle, BarChart3, User, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import { collection, getDocs, query, where, doc, getDoc, limit, QueryDocumentSnapshot } from 'firebase/firestore';
+import { ArrowLeft, Clock, CheckCircle, XCircle, BarChart3, User, BookOpen, ChevronDown, ChevronUp, FileText, AlertCircle } from 'lucide-react';
 import Providers from '@/components/Providers';
 import Image from 'next/image';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface AssignedStudent {
   id: string;
@@ -59,107 +88,33 @@ function ParentCourseDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<{[key: string]: boolean}>({});
+  const [exams, setExams] = useState<any[]>([]);
 
-  useEffect(() => {
-    const fetchCourseData = async () => {
-      if (!courseId || !user) return;
-
-      setLoading(true);
-      try {
-        // 1. Znajdź przypisanego ucznia
-        const parentStudentsRef = collection(db, 'parent_students');
-        const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
-        const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
-
-        if (parentStudentsSnapshot.empty) {
-          setError('Nie masz przypisanego żadnego ucznia.');
-          setLoading(false);
-          return;
-        }
-
-        const studentId = parentStudentsSnapshot.docs[0].data().student;
-
-        // 2. Pobierz dane ucznia
-        const usersRef = collection(db, 'users');
-        const studentQuery = query(usersRef, where('uid', '==', studentId));
-        const studentSnapshot = await getDocs(studentQuery);
-        
-        if (studentSnapshot.empty) {
-          setError('Nie znaleziono danych ucznia.');
-          setLoading(false);
-          return;
-        }
-
-        const studentData = studentSnapshot.docs[0].data();
-        setAssignedStudent({
-          id: studentId,
-          name: studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || 'Uczeń',
-          email: studentData.email || ''
-        });
-
-        // 3. Pobierz dane kursu
-        const courseDoc = await getDoc(doc(db, 'courses', String(courseId)));
-        
-        if (!courseDoc.exists()) {
-          setError('Nie znaleziono kursu.');
-          setLoading(false);
-          return;
-        }
-
-        const courseData = courseDoc.data();
-        
-        // 4. Sprawdź czy uczeń ma dostęp do kursu
-        const assignedUsers = courseData.assignedUsers || [];
-        const hasAccess = assignedUsers.includes(studentData.email) || 
-                         assignedUsers.includes(studentId) ||
-                         (courseData.assignedClasses && courseData.assignedClasses.length > 0 &&
-                          studentData.classes && Array.isArray(studentData.classes) && 
-                          studentData.classes.some((classId: string) => 
-                            courseData.assignedClasses.includes(classId)
-                          ));
-        
-        if (!hasAccess) {
-          setError('Uczeń nie ma dostępu do tego kursu.');
-          setLoading(false);
-          return;
-        }
-        
-        setCourse(courseData);
-
-        // 5. Pobierz statystyki ucznia dla tego kursu
-        await fetchStudentStatistics(studentId, courseId, courseData.sections || [], studentData);
-
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching course:', err);
-        setError('Błąd podczas ładowania kursu.');
-        setLoading(false);
-      }
-    };
-
-    fetchCourseData();
-  }, [courseId, user]);
-
-  const fetchStudentStatistics = async (studentId: string, courseId: string, courseSections: any[], studentData: any) => {
+  const fetchStudentStatistics = useCallback(async (studentId: string, courseId: string, courseSections: any[], studentData: any): Promise<StudentStatistics> => {
     try {
-      // Pobierz postęp ucznia
+      // Pobierz postęp ucznia - wszystkie warianty równolegle
       const progressRef = collection(db, 'progress');
-      let progressQuery = query(progressRef, where('studentId', '==', studentId));
-      let progressSnapshot = await getDocs(progressQuery);
+      const [progressByStudentId, progressByUserId, progressByUserId2] = await Promise.all([
+        getDocs(query(progressRef, where('studentId', '==', studentId), limit(500))),
+        getDocs(query(progressRef, where('user_id', '==', studentId), limit(500))),
+        getDocs(query(progressRef, where('userId', '==', studentId), limit(500)))
+      ]);
       
-      if (progressSnapshot.empty) {
-        progressQuery = query(progressRef, where('user_id', '==', studentId));
-        progressSnapshot = await getDocs(progressQuery);
-      }
+      // Połącz wszystkie wyniki
+      const allProgressDocs = [
+        ...progressByStudentId.docs,
+        ...progressByUserId.docs,
+        ...progressByUserId2.docs
+      ];
       
-      if (progressSnapshot.empty) {
-        progressQuery = query(progressRef, where('userId', '==', studentId));
-        progressSnapshot = await getDocs(progressQuery);
-      }
+      // Usuń duplikaty
+      const uniqueProgressDocs = allProgressDocs.filter((doc, index, self) =>
+        index === self.findIndex(d => d.id === doc.id)
+      );
 
       // Utwórz mapę postępu
       const progressMap = new Map();
-      progressSnapshot.docs.forEach(doc => {
+      uniqueProgressDocs.forEach(doc => {
         const progressData = doc.data();
         const lessonId = progressData.lessonId || progressData.lesson_id || progressData.lesson;
         if (lessonId) {
@@ -167,15 +122,18 @@ function ParentCourseDetailContent() {
         }
       });
 
-      // Pobierz dodatkowy czas z user_learning_time
+      // Pobierz dodatkowy czas z user_learning_time - równolegle
       const learningTimeRef = collection(db, 'user_learning_time');
-      let learningTimeQuery = query(learningTimeRef, where('userId', '==', studentId));
-      let learningTimeSnapshot = await getDocs(learningTimeQuery);
+      const [learningTimeByUserId, learningTimeByUserId2] = await Promise.all([
+        getDocs(query(learningTimeRef, where('userId', '==', studentId), limit(100))),
+        getDocs(query(learningTimeRef, where('user_id', '==', studentId), limit(100)))
+      ]);
       
-      if (learningTimeSnapshot.empty) {
-        learningTimeQuery = query(learningTimeRef, where('user_id', '==', studentId));
-        learningTimeSnapshot = await getDocs(learningTimeQuery);
-      }
+      // Połącz wyniki
+      const allLearningTimeDocs = [...learningTimeByUserId.docs, ...learningTimeByUserId2.docs];
+      const uniqueLearningTimeDocs = allLearningTimeDocs.filter((doc, index, self) =>
+        index === self.findIndex(d => d.id === doc.id)
+      );
 
       // Przetwórz sekcje i lekcje
       const sectionsProgress: SectionProgress[] = [];
@@ -237,7 +195,7 @@ function ParentCourseDetailContent() {
       });
 
       // Dodaj czas z user_learning_time dla tego kursu
-      learningTimeSnapshot.docs.forEach(doc => {
+      uniqueLearningTimeDocs.forEach(doc => {
         const timeData = doc.data();
         const courseIdFromTime = timeData.courseId || timeData.course_id || timeData.course;
         if (courseIdFromTime === courseId) {
@@ -245,26 +203,17 @@ function ParentCourseDetailContent() {
         }
       });
 
-      // Pobierz oceny dla tego kursu - tak samo jak w dzienniku
+      // Pobierz oceny dla tego kursu - wszystkie warianty równolegle
       const gradesRef = collection(db, 'grades');
+      const [gradesByUserId, gradesByEmail, gradesByStudentId] = await Promise.all([
+        getDocs(query(gradesRef, where('user_id', '==', studentId), limit(200))),
+        studentData.email ? getDocs(query(gradesRef, where('studentEmail', '==', studentData.email), limit(200))) : Promise.resolve({ docs: [] } as any),
+        getDocs(query(gradesRef, where('studentId', '==', studentId), limit(200)))
+      ]);
       
-      // Pobierz oceny przez user_id
-      const gradesQuery = query(gradesRef, where('user_id', '==', studentId));
-      const gradesSnapshot = await getDocs(gradesQuery);
-      const gradesList = gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // Pobierz również oceny gdzie studentEmail jest równy email użytkownika
-      let gradesByEmailList: any[] = [];
-      if (studentData.email) {
-        const gradesByEmailQuery = query(gradesRef, where('studentEmail', '==', studentData.email));
-        const gradesByEmailSnapshot = await getDocs(gradesByEmailQuery);
-        gradesByEmailList = gradesByEmailSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      }
-
-      // Pobierz również oceny gdzie studentId jest równy studentId
-      const gradesByStudentIdQuery = query(gradesRef, where('studentId', '==', studentId));
-      const gradesByStudentIdSnapshot = await getDocs(gradesByStudentIdQuery);
-      const gradesByStudentIdList = gradesByStudentIdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const gradesList = gradesByUserId.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+      const gradesByEmailList = gradesByEmail.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+      const gradesByStudentIdList = gradesByStudentId.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
       // Połącz wszystkie listy i usuń duplikaty
       const allGrades = [...gradesList, ...gradesByEmailList, ...gradesByStudentIdList];
@@ -293,7 +242,7 @@ function ParentCourseDetailContent() {
 
       const progressPercentage = totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0;
 
-      setStatistics({
+      const statisticsData: StudentStatistics = {
         progress: Math.round(progressPercentage),
         completedLessons,
         totalLessons,
@@ -301,29 +250,200 @@ function ParentCourseDetailContent() {
         averageScore,
         lastAccessed: lastAccessed || undefined,
         sections: sectionsProgress
-      });
+      };
+      
+      setStatistics(statisticsData);
+      return statisticsData;
     } catch (error) {
       console.error('Error fetching student statistics:', error);
-      setStatistics({
+      const defaultStats: StudentStatistics = {
         progress: 0,
         completedLessons: 0,
         totalLessons: 0,
         totalTimeSpent: 0,
         sections: []
-      });
+      };
+      setStatistics(defaultStats);
+      return defaultStats;
     }
-  };
+  }, []);
 
-  const formatTime = (minutes: number) => {
+  const fetchExams = useCallback(async (courseId: string, sections: any[]): Promise<any[]> => {
+    try {
+      // Znajdź sekcje z quizId (egzaminy)
+      const examSections = sections.filter((section: any) => {
+        // Sprawdź czy sekcja ma quizId lub czy jest typu exam
+        return section.quizId || section.type === 'exam' || (section.subsections && section.subsections.some((sub: any) => sub.quizId));
+      });
+
+      if (examSections.length === 0) {
+        return [];
+      }
+
+      // Zbierz wszystkie quizId
+      const quizIds: string[] = [];
+      examSections.forEach((section: any) => {
+        if (section.quizId) {
+          quizIds.push(section.quizId);
+        }
+        if (section.subsections) {
+          section.subsections.forEach((sub: any) => {
+            if (sub.quizId) {
+              quizIds.push(sub.quizId);
+            }
+          });
+        }
+      });
+
+      if (quizIds.length === 0) {
+        return [];
+      }
+
+      // Pobierz quizy z Firestore - równolegle
+      const quizQueries = quizIds.slice(0, 50).map(quizId => 
+        getDoc(doc(db, 'quizzes', quizId)).then(quizDoc => {
+          if (quizDoc.exists()) {
+            return { id: quizDoc.id, ...quizDoc.data(), sectionId: examSections.find(s => s.quizId === quizId || s.subsections?.some((sub: any) => sub.quizId === quizId))?.id };
+          }
+          return null;
+        }).catch(() => null)
+      );
+
+      const quizResults = await Promise.all(quizQueries);
+      const validQuizzes = quizResults.filter(q => q !== null);
+
+      // Połącz quizy z sekcjami i dodaj informacje o czasie
+      const examsWithSections = examSections.map((section: any) => {
+        const sectionQuizId = section.quizId || section.subsections?.find((sub: any) => sub.quizId)?.quizId;
+        const quiz = validQuizzes.find(q => q.id === sectionQuizId);
+        const sectionData = section as { start_time?: any; submission_deadline?: any; [key: string]: any };
+        
+        return {
+          sectionId: section.id,
+          sectionName: section.name || section.title || 'Egzamin',
+          quizId: sectionQuizId,
+          quiz: quiz || null,
+          start_time: sectionData.start_time || (quiz as any)?.start_time || null,
+          submission_deadline: sectionData.submission_deadline || (quiz as any)?.submission_deadline || null
+        };
+      }).filter(exam => exam.quizId);
+
+      return examsWithSections;
+    } catch (error) {
+      console.error('Error fetching exams:', error);
+      return [];
+    }
+  }, []);
+
+  const fetchCourseData = useCallback(async () => {
+    if (!courseId || !user) return;
+
+    const cacheKey = `parent_course_${courseId}_${user.uid}`;
+    const cached = getSessionCache<{ course: any; statistics: StudentStatistics; assignedStudent: AssignedStudent }>(cacheKey);
+    
+    if (cached) {
+      setCourse(cached.course);
+      setStatistics(cached.statistics);
+      setAssignedStudent(cached.assignedStudent);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await measureAsync('ParentCourseDetail:fetchCourseData', async () => {
+        // 1. Znajdź przypisanego ucznia i pobierz dane kursu równolegle
+        const [parentStudentsSnapshot, courseDoc] = await Promise.all([
+          getDocs(query(collection(db, 'parent_students'), where('parent', '==', user.uid))),
+          getDoc(doc(db, 'courses', String(courseId)))
+        ]);
+
+        if (parentStudentsSnapshot.empty) {
+          setError('Nie masz przypisanego żadnego ucznia.');
+          setLoading(false);
+          return;
+        }
+
+        if (!courseDoc.exists()) {
+          setError('Nie znaleziono kursu.');
+          setLoading(false);
+          return;
+        }
+
+        const studentId = parentStudentsSnapshot.docs[0].data().student;
+        const courseData = courseDoc.data();
+
+        // 2. Pobierz dane ucznia
+        const studentSnapshot = await getDocs(query(collection(db, 'users'), where('uid', '==', studentId)));
+        
+        if (studentSnapshot.empty) {
+          setError('Nie znaleziono danych ucznia.');
+          setLoading(false);
+          return;
+        }
+
+        const studentData = studentSnapshot.docs[0].data();
+        const assignedStudentData = {
+          id: studentId,
+          name: studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || 'Uczeń',
+          email: studentData.email || ''
+        };
+        setAssignedStudent(assignedStudentData);
+        
+        // 3. Sprawdź czy uczeń ma dostęp do kursu
+        const assignedUsers = courseData.assignedUsers || [];
+        const hasAccess = assignedUsers.includes(studentData.email) || 
+                         assignedUsers.includes(studentId) ||
+                         (courseData.assignedClasses && courseData.assignedClasses.length > 0 &&
+                          studentData.classes && Array.isArray(studentData.classes) && 
+                          studentData.classes.some((classId: string) => 
+                            courseData.assignedClasses.includes(classId)
+                          ));
+        
+        if (!hasAccess) {
+          setError('Uczeń nie ma dostępu do tego kursu.');
+          setLoading(false);
+          return;
+        }
+        
+        setCourse(courseData);
+
+        // 4. Pobierz statystyki ucznia dla tego kursu
+        const statistics = await fetchStudentStatistics(studentId, courseId, courseData.sections || [], studentData);
+        
+        // 5. Pobierz egzaminy (quizzes) dla tego kursu
+        const examsData = await fetchExams(courseId, courseData.sections || []);
+        setExams(examsData);
+        
+        // Cache data
+        setSessionCache(cacheKey, {
+          course: courseData,
+          statistics,
+          assignedStudent: assignedStudentData
+        });
+      });
+    } catch (err) {
+      console.error('Error fetching course:', err);
+      setError('Błąd podczas ładowania kursu.');
+    } finally {
+      setLoading(false);
+    }
+  }, [courseId, user, fetchStudentStatistics, fetchExams]);
+
+  useEffect(() => {
+    fetchCourseData();
+  }, [fetchCourseData]);
+
+  const formatTime = useCallback((minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     if (hours > 0) {
       return `${hours}h ${mins}min`;
     }
     return `${mins}min`;
-  };
+  }, []);
 
-  const formatDate = (dateString: string) => {
+  const formatDate = useCallback((dateString: string) => {
     try {
       return new Date(dateString).toLocaleDateString('pl-PL', {
         year: 'numeric',
@@ -335,14 +455,14 @@ function ParentCourseDetailContent() {
     } catch {
       return 'Nieznana data';
     }
-  };
+  }, []);
 
-  const toggleSection = (sectionId: string) => {
+  const toggleSection = useCallback((sectionId: string) => {
     setExpandedSections(prev => ({
       ...prev,
       [sectionId]: !prev[sectionId]
     }));
-  };
+  }, []);
 
   if (loading) {
     return (
@@ -382,9 +502,9 @@ function ParentCourseDetailContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
+    <div className="h-screen overflow-hidden flex flex-col bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full" style={{ maxWidth: '100vw' }}>
       {/* Header z przyciskiem powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+      <div className="flex-shrink-0 bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin/parent/courses'}
@@ -415,7 +535,7 @@ function ParentCourseDetailContent() {
       </div>
 
       {/* Informacje o kursie */}
-      <div className="px-4 sm:px-6 lg:px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 min-h-0">
         {/* Opis kursu */}
         <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-6 mb-6">
           <h2 className="text-xl font-bold text-gray-900 mb-3">O kursie</h2>
@@ -514,6 +634,99 @@ function ParentCourseDetailContent() {
             </div>
           </div>
         </div>
+
+        {/* Sekcja z egzaminami */}
+        {exams.length > 0 && (
+          <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-6 mb-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <FileText className="w-6 h-6 text-red-600" />
+              Egzaminy
+            </h2>
+            
+            <div className="space-y-4">
+              {exams.map((exam) => {
+                const now = new Date();
+                const startTime = exam.start_time ? new Date(exam.start_time) : null;
+                const deadline = exam.submission_deadline ? new Date(exam.submission_deadline) : null;
+                
+                let statusMessage = '';
+                let statusColor = 'bg-blue-100 text-blue-800';
+                
+                if (deadline) {
+                  if (startTime && now < startTime) {
+                    statusMessage = `Egzamin dostępny od: ${startTime.toLocaleString('pl-PL', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}`;
+                    statusColor = 'bg-yellow-100 text-yellow-800';
+                  } else if (now > deadline) {
+                    statusMessage = 'Czas na wykonanie egzaminu minął';
+                    statusColor = 'bg-red-100 text-red-800';
+                  } else {
+                    statusMessage = 'Egzamin dostępny';
+                    statusColor = 'bg-green-100 text-green-800';
+                  }
+                } else {
+                  statusMessage = 'Egzamin bez ograniczeń czasowych';
+                }
+
+                return (
+                  <div
+                    key={exam.sectionId}
+                    className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900 text-lg mb-2">
+                          {exam.sectionName}
+                        </h3>
+                        
+                        <div className="space-y-2 text-sm text-gray-600">
+                          {startTime && (
+                            <div className="flex items-center gap-2">
+                              <Clock className="w-4 h-4 text-blue-600" />
+                              <span className="font-medium">Dostępny od:</span>
+                              <span>{startTime.toLocaleString('pl-PL', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</span>
+                            </div>
+                          )}
+                          
+                          {deadline && (
+                            <div className="flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 text-red-600" />
+                              <span className="font-medium">Termin zakończenia:</span>
+                              <span>{deadline.toLocaleString('pl-PL', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="ml-4">
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                          {statusMessage}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Szczegółowy postęp - tylko statystyki, bez treści */}
         <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-6">

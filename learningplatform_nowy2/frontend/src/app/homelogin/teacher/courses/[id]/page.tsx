@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, getDocs, doc, updateDoc, getDoc, setDoc, addDoc, query, where } from "firebase/firestore";
+import { collection, getDocs, doc, updateDoc, getDoc, setDoc, query, where } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db } from "@/config/firebase";
 import Image from "next/image";
@@ -1360,49 +1360,10 @@ function TeacherCourseDetailContent() {
 
 
 
-  // Function to create calendar event for assignments/exams
-  const createCalendarEvent = useCallback(async (section: { name: string; type: string; id: number; deadline?: string; }, courseId: string | string[], teacherUid: string) => {
-    try {
-      console.log('Creating calendar event for section:', section);
-      console.log('Course ID:', courseId);
-      console.log('Teacher UID:', teacherUid);
-      
-      // Get assigned students for this course
-      const courseDoc = await getDoc(doc(db, "courses", String(courseId)));
-      if (!courseDoc.exists()) {
-        console.log('Course document does not exist');
-        return;
-      }
-      
-      const courseData = courseDoc.data();
-      const assignedUids = Array.isArray(courseData.assignedUsers) ? courseData.assignedUsers : [];
-      
-      console.log('Assigned students:', assignedUids);
-      console.log('Course data:', courseData);
-      
-      // Create event in calendar collection
-      const eventData = {
-        title: section.name,
-        type: section.type === 'assignment' ? 'assignment' : 'material',
-        courseId: String(courseId),
-        sectionId: section.id,
-        deadline: section.deadline,
-        createdBy: teacherUid,
-        students: assignedUids, // All students assigned to this course
-        description: `Zadanie z kursu: ${courseData.title || 'Kurs'}`,
-        createdAt: new Date().toISOString()
-      };
-      
-      console.log('Event data to be created:', eventData);
-      
-      const docRef = await addDoc(collection(db, "events"), eventData);
-      
-      console.log('Calendar event created successfully with ID:', docRef.id);
-      console.log('Calendar event created for section:', section.name);
-    } catch {
-      // Ignore
-    }
-  }, []);
+  // Function to create calendar event for assignments/exams (currently unused)
+  // const createCalendarEvent = useCallback(async (section: { name: string; type: string; id: number; deadline?: string; }, courseId: string | string[], teacherUid: string) => {
+  //   // Implementation removed - function not used
+  // }, []);
 
   // Add delete handlers:
   const handleDeleteSection = async (sectionId: number) => {

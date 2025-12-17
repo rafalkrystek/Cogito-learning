@@ -6,7 +6,36 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/config/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, doc, getDoc } from 'firebase/firestore';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Teacher {
   id: string;
@@ -35,46 +64,66 @@ export default function ParentTutors() {
   const fetchAssignedStudentData = useCallback(async () => {
     if (!user) return;
 
+    const cacheKey = `parent_tutors_${user.uid}`;
+    const cached = getSessionCache<AssignedStudent>(cacheKey);
+    
+    if (cached) {
+      setAssignedStudent(cached);
+      setLoading(false);
+      return;
+    }
+
     try {
-      // 1. Znajdź przypisanego ucznia
-      const parentStudentsRef = collection(db, 'parent_students');
-      const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
-      const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
+      await measureAsync('ParentTutors:fetchAssignedStudentData', async () => {
+        // 1. Znajdź przypisanego ucznia
+        const parentStudentsSnapshot = await getDocs(query(collection(db, 'parent_students'), where('parent', '==', user.uid)));
 
-      if (parentStudentsSnapshot.empty) {
-        setError('Nie masz przypisanego żadnego ucznia.');
-        setLoading(false);
-        return;
-      }
+        if (parentStudentsSnapshot.empty) {
+          setError('Nie masz przypisanego żadnego ucznia.');
+          setLoading(false);
+          return;
+        }
 
-      const studentId = parentStudentsSnapshot.docs[0].data().student;
+        const studentId = parentStudentsSnapshot.docs[0].data().student;
 
-      // 2. Pobierz dane ucznia
-      const studentDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', studentId)));
-      if (studentDoc.empty) {
-        setError('Nie znaleziono danych ucznia.');
-        setLoading(false);
-        return;
-      }
+        // 2. Pobierz dane ucznia i kursy równolegle
+        const [studentSnapshot, coursesSnapshot] = await Promise.all([
+          getDocs(query(collection(db, 'users'), where('uid', '==', studentId))),
+          getDocs(query(collection(db, 'courses'), limit(200)))
+        ]);
+        
+        if (studentSnapshot.empty) {
+          setError('Nie znaleziono danych ucznia.');
+          setLoading(false);
+          return;
+        }
 
-      const studentData = studentDoc.docs[0].data();
+        const studentData = studentSnapshot.docs[0].data();
 
-      // 3. Pobierz kursy ucznia
-      const coursesRef = collection(db, 'courses');
-      const coursesSnapshot = await getDocs(coursesRef);
-      const studentCourses = coursesSnapshot.docs
-        .filter(doc => doc.data().students?.includes(studentId))
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        // 3. Filtruj kursy ucznia
+        const studentCourses = coursesSnapshot.docs
+          .filter(doc => {
+            const courseData = doc.data();
+            return courseData.students?.includes(studentId) ||
+                   courseData.assignedUsers?.includes(studentId) ||
+                   courseData.assignedUsers?.includes(studentData.email);
+          })
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
 
-      // 4. Pobierz dane nauczycieli
-      const teacherIds = [...new Set(studentCourses.map(course => (course as any).teacher))];
-      const teachersData = await Promise.all(
-        teacherIds.map(async (teacherId) => {
-          const teacherDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', teacherId)));
-          const teacherData = teacherDoc.docs[0]?.data() || {};
+        // 4. Pobierz dane nauczycieli równolegle (N+1 fix)
+        const teacherIds = [...new Set(studentCourses.map(course => (course as any).teacher).filter(Boolean))];
+        
+        const teacherQueries = teacherIds.slice(0, 50).map(teacherId =>
+          getDoc(doc(db, 'users', teacherId))
+        );
+        const teacherDocs = await Promise.all(teacherQueries);
+        
+        const teachersData = teacherDocs.map((teacherDoc, index) => {
+          const teacherId = teacherIds[index];
+          const teacherData = teacherDoc.exists() ? teacherDoc.data() : {};
 
           const teacherCourses = studentCourses
             .filter(course => (course as any).teacher === teacherId)
@@ -85,19 +134,22 @@ export default function ParentTutors() {
 
           return {
             id: teacherId,
-            name: teacherData.displayName || teacherData.email,
-            email: teacherData.email,
+            name: teacherData.displayName || teacherData.email || 'Nieznany nauczyciel',
+            email: teacherData.email || '',
             bio: teacherData.bio,
             courses: teacherCourses
           };
-        })
-      );
+        });
 
-      setAssignedStudent({
-        id: studentId,
-        name: studentData.displayName || studentData.email,
-        email: studentData.email,
-        teachers: teachersData
+        const assignedStudentData: AssignedStudent = {
+          id: studentId,
+          name: studentData.displayName || studentData.email,
+          email: studentData.email,
+          teachers: teachersData
+        };
+        
+        setAssignedStudent(assignedStudentData);
+        setSessionCache(cacheKey, assignedStudentData);
       });
     } catch (err) {
       console.error('Error fetching student data:', err);
@@ -140,7 +192,8 @@ export default function ParentTutors() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
+    <div className="h-screen overflow-hidden flex flex-col w-full" style={{ maxWidth: '100vw' }}>
+      <div className="flex-1 overflow-y-auto container mx-auto px-4 py-8 min-h-0">
       <div className="mb-8">
         <h1 className="text-2xl font-bold mb-2">Nauczyciele</h1>
         <p className="text-gray-600">
@@ -179,6 +232,7 @@ export default function ParentTutors() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 } 

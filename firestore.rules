@@ -197,7 +197,21 @@ service cloud.firestore {
     
     match /userLearningTime/{userId} {
       allow write: if isOwner(userId);
-      allow read: if isOwner(userId) || isAdmin() || isTeacher();
+      allow read: if isOwner(userId) || isAdmin() || isTeacher() || isParent();
+    }
+
+    match /user_learning_time/{documentId} {
+      allow write: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.user_id == request.auth.uid
+      );
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.user_id == request.auth.uid ||
+        isAdmin() ||
+        isTeacher() ||
+        isParent()
+      );
     }
 
     // 17. WIADOMOŚCI PRYWATNE

@@ -1,13 +1,42 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { ArrowLeft, TrendingUp, Award, Clock, Calendar, Star, Trophy, Target, ChevronDown, ChevronUp } from 'lucide-react';
-import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
-// Import Recharts bezpośrednio - lazy loading powodował problemy z typami
+import { measureAsync } from '@/utils/perf';
+// Import Recharts bezpośrednio - tak jak u ucznia
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface DailyStats {
   [date: string]: number;
@@ -54,98 +83,186 @@ export default function ParentStats() {
   const [topBadges, setTopBadges] = useState<any[]>([]);
 
   // Pobierz przypisanego ucznia
-  useEffect(() => {
-    const fetchAssignedStudent = async () => {
-      if (!user) return;
+  const fetchAssignedStudent = useCallback(async () => {
+    if (!user) return;
 
-      try {
-        const parentStudentsRef = collection(db, 'parent_students');
-        const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
-        const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
+    const cacheKey = `parent_stats_student_${user.uid}`;
+    const cached = getSessionCache<{ id: string; name: string; email: string }>(cacheKey);
+    
+    if (cached) {
+      setAssignedStudent(cached);
+      return;
+    }
 
-        if (parentStudentsSnapshot.empty) {
-          setLoading(false);
-          return;
-        }
+    try {
+      const parentStudentsSnapshot = await getDocs(query(collection(db, 'parent_students'), where('parent', '==', user.uid)));
 
-        const studentId = parentStudentsSnapshot.docs[0].data().student;
-
-        // Pobierz dane ucznia
-        const usersRef = collection(db, 'users');
-        const studentQuery = query(usersRef, where('uid', '==', studentId));
-        const studentSnapshot = await getDocs(studentQuery);
-        
-        if (!studentSnapshot.empty) {
-          const studentData = studentSnapshot.docs[0].data();
-          setAssignedStudent({
-            id: studentId,
-            name: studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || 'Uczeń',
-            email: studentData.email || ''
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching assigned student:', error);
+      if (parentStudentsSnapshot.empty) {
+        setLoading(false);
+        return;
       }
-    };
 
-    fetchAssignedStudent();
+      const studentId = parentStudentsSnapshot.docs[0].data().student;
+
+      // Pobierz dane ucznia
+      const studentSnapshot = await getDocs(query(collection(db, 'users'), where('uid', '==', studentId)));
+      
+      if (!studentSnapshot.empty) {
+        const studentData = studentSnapshot.docs[0].data();
+        const studentInfo = {
+          id: studentId,
+          name: studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || 'Uczeń',
+          email: studentData.email || ''
+        };
+        setAssignedStudent(studentInfo);
+        setSessionCache(cacheKey, studentInfo);
+      }
+    } catch (error) {
+      console.error('Error fetching assigned student:', error);
+    }
   }, [user]);
 
-  // Pobierz dane nauki przypisanego ucznia
   useEffect(() => {
-    const fetchLearningData = async () => {
-      if (!assignedStudent?.id) {
-        setLoading(false);
-        return;
-      }
+    fetchAssignedStudent();
+  }, [fetchAssignedStudent]);
 
-      try {
-        const userTimeDoc = doc(db, 'userLearningTime', assignedStudent.id);
-        const docSnap = await getDoc(userTimeDoc);
+  // Pobierz dane nauki przypisanego ucznia
+  const fetchLearningData = useCallback(async () => {
+    if (!assignedStudent?.id) {
+      setLoading(false);
+      return;
+    }
 
-        if (docSnap.exists()) {
-          const data = docSnap.data() as UserLearningData;
-          setLearningData(data);
-          console.log('📊 Loaded learning data for student:', data);
-        } else {
-          console.log('No learning data found for student');
-          setLearningData(null);
+    const cacheKey = `parent_learning_data_${assignedStudent.id}`;
+    const cached = getSessionCache<UserLearningData>(cacheKey);
+    
+    if (cached) {
+      setLearningData(cached);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      await measureAsync('ParentStats:fetchLearningData', async () => {
+        // Sprawdź wszystkie możliwe źródła danych - równolegle
+        const [docSnap1, docSnap2, docSnap3] = await Promise.all([
+          // Główna kolekcja userLearningTime (dokument)
+          getDoc(doc(db, 'userLearningTime', assignedStudent.id)),
+          // Kolekcja user_learning_time (dokumenty z userId)
+          getDocs(query(collection(db, 'user_learning_time'), where('userId', '==', assignedStudent.id), limit(1))),
+          // Kolekcja user_learning_time (dokumenty z user_id)
+          getDocs(query(collection(db, 'user_learning_time'), where('user_id', '==', assignedStudent.id), limit(1)))
+        ]);
+
+        let data: UserLearningData | null = null;
+
+        // Sprawdź pierwszą kolekcję (userLearningTime - dokument)
+        if (docSnap1.exists()) {
+          const docData = docSnap1.data();
+          data = {
+            userId: assignedStudent.id,
+            totalMinutes: docData.totalMinutes || 0,
+            dailyStats: docData.dailyStats || {},
+            createdAt: docData.createdAt,
+            lastUpdated: docData.lastUpdated
+          };
+        } 
+        // Sprawdź drugą kolekcję (user_learning_time z userId)
+        else if (!docSnap2.empty) {
+          const docData = docSnap2.docs[0].data();
+          data = {
+            userId: assignedStudent.id,
+            totalMinutes: docData.totalMinutes || docData.time_spent_minutes || 0,
+            dailyStats: docData.dailyStats || docData.daily_stats || {},
+            createdAt: docData.createdAt || docData.created_at,
+            lastUpdated: docData.lastUpdated || docData.last_updated
+          };
         }
-      } catch (error) {
-        console.error('Error fetching learning data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+        // Sprawdź trzecią kolekcję (user_learning_time z user_id)
+        else if (!docSnap3.empty) {
+          const docData = docSnap3.docs[0].data();
+          data = {
+            userId: assignedStudent.id,
+            totalMinutes: docData.totalMinutes || docData.time_spent_minutes || 0,
+            dailyStats: docData.dailyStats || docData.daily_stats || {},
+            createdAt: docData.createdAt || docData.created_at,
+            lastUpdated: docData.lastUpdated || docData.last_updated
+          };
+        }
 
-    fetchLearningData();
+        if (data) {
+          // Upewnij się, że dailyStats jest obiektem
+          if (!data.dailyStats || typeof data.dailyStats !== 'object') {
+            data.dailyStats = {};
+          }
+          
+          console.log('📊 ParentStats: Loaded learning data:', {
+            totalMinutes: data.totalMinutes,
+            dailyStatsKeys: Object.keys(data.dailyStats || {}).length,
+            sampleDates: Object.keys(data.dailyStats || {}).slice(0, 5),
+            dailyStats: data.dailyStats
+          });
+          setLearningData(data);
+          setSessionCache(cacheKey, data);
+        } else {
+          console.log('📊 ParentStats: No learning data found for student:', assignedStudent.id);
+          // Ustaw puste dane zamiast null, aby wykresy mogły się renderować
+          setLearningData({
+            userId: assignedStudent.id,
+            totalMinutes: 0,
+            dailyStats: {},
+            createdAt: null,
+            lastUpdated: null
+          });
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching learning data:', error);
+      // Ustaw puste dane zamiast null, aby wykresy mogły się renderować
+      setLearningData({
+        userId: assignedStudent.id,
+        totalMinutes: 0,
+        dailyStats: {},
+        createdAt: null,
+        lastUpdated: null
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [assignedStudent]);
 
-  // Pobierz oceny przypisanego ucznia
   useEffect(() => {
-    const fetchGrades = async () => {
-      if (!assignedStudent?.id || !assignedStudent?.email) {
-        setGradesLoading(false);
-        return;
-      }
+    fetchLearningData();
+  }, [fetchLearningData]);
 
-      try {
-        console.log('🔄 Fetching grades for student:', assignedStudent.id, assignedStudent.email);
-        
-        // Pobierz oceny przez user_id
-        const gradesQuery1 = query(collection(db, 'grades'), where('user_id', '==', assignedStudent.id));
-        const gradesSnapshot1 = await getDocs(gradesQuery1);
-        const gradesList1 = gradesSnapshot1.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+  // Pobierz oceny przypisanego ucznia
+  const fetchGrades = useCallback(async () => {
+    if (!assignedStudent?.id || !assignedStudent?.email) {
+      setGradesLoading(false);
+      return;
+    }
 
-        // Pobierz oceny przez studentEmail
-        const gradesQuery2 = query(collection(db, 'grades'), where('studentEmail', '==', assignedStudent.email));
-        const gradesSnapshot2 = await getDocs(gradesQuery2);
-        const gradesList2 = gradesSnapshot2.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+    const cacheKey = `parent_stats_grades_${assignedStudent.id}`;
+    const cached = getSessionCache<Grade[]>(cacheKey);
+    
+    if (cached) {
+      setGrades(cached);
+      setGradesLoading(false);
+      return;
+    }
 
-        // Pobierz oceny przez studentId
-        const gradesQuery3 = query(collection(db, 'grades'), where('studentId', '==', assignedStudent.id));
-        const gradesSnapshot3 = await getDocs(gradesQuery3);
-        const gradesList3 = gradesSnapshot3.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+    try {
+      await measureAsync('ParentStats:fetchGrades', async () => {
+        // Pobierz oceny równolegle
+        const [gradesByUserId, gradesByEmail, gradesByStudentId] = await Promise.all([
+          getDocs(query(collection(db, 'grades'), where('user_id', '==', assignedStudent.id), limit(500))),
+          getDocs(query(collection(db, 'grades'), where('studentEmail', '==', assignedStudent.email), limit(500))),
+          getDocs(query(collection(db, 'grades'), where('studentId', '==', assignedStudent.id), limit(500)))
+        ]);
+
+        const gradesList1 = gradesByUserId.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+        const gradesList2 = gradesByEmail.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+        const gradesList3 = gradesByStudentId.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
 
         // Połącz wszystkie listy i usuń duplikaty
         const allGrades = [...gradesList1, ...gradesList2, ...gradesList3];
@@ -153,30 +270,32 @@ export default function ParentStats() {
           index === self.findIndex(g => g.id === grade.id)
         );
 
-        console.log('📊 All unique grades for student:', uniqueGrades);
         setGrades(uniqueGrades);
-      } catch (error) {
-        console.error('Error fetching grades:', error);
-      } finally {
-        setGradesLoading(false);
-      }
-    };
-
-    fetchGrades();
+        setSessionCache(cacheKey, uniqueGrades);
+      });
+    } catch (error) {
+      console.error('Error fetching grades:', error);
+    } finally {
+      setGradesLoading(false);
+    }
   }, [assignedStudent]);
 
-  // Formatuj minuty na godziny i minuty
-  const formatMinutes = (minutes: number) => {
+  useEffect(() => {
+    fetchGrades();
+  }, [fetchGrades]);
+
+  // Formatuj minuty na godziny i minuty - memoized
+  const formatMinutes = useCallback((minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     if (hours > 0) {
       return `${hours}h ${mins}m`;
     }
     return `${mins}m`;
-  };
+  }, []);
 
-  // Pobierz dzisiejsze minuty
-  const getTodayMinutes = () => {
+  // Pobierz dzisiejsze minuty - memoized
+  const getTodayMinutes = useCallback(() => {
     if (!learningData?.dailyStats) return 0;
     const today = new Date();
     const year = today.getFullYear();
@@ -184,7 +303,7 @@ export default function ParentStats() {
     const day = String(today.getDate()).padStart(2, '0');
     const dateKey = `${year}-${month}-${day}`;
     return learningData.dailyStats[dateKey] || 0;
-  };
+  }, [learningData]);
 
   // Przygotuj dane dla wykresu tygodniowego (ostatnie 7 dni)
   const getWeeklyData = () => {
@@ -290,8 +409,8 @@ export default function ParentStats() {
     return data;
   };
 
-  // Funkcje do obliczania statystyk ocen
-  const getGradeStatistics = () => {
+  // Funkcje do obliczania statystyk ocen - memoized
+  const getGradeStatistics = useMemo(() => {
     if (!grades || grades.length === 0) {
       return {
         totalGrades: 0,
@@ -386,12 +505,12 @@ export default function ParentStats() {
       progress,
       gradeDistribution: distribution
     };
-  };
+  }, [grades]);
 
-  const gradeStats = getGradeStatistics();
+  const gradeStats = getGradeStatistics;
 
-  // Przygotuj dane dla wykresu rozkładu ocen
-  const getGradeDistributionData = () => {
+  // Przygotuj dane dla wykresu rozkładu ocen - memoized
+  const getGradeDistributionData = useMemo(() => {
     return [
       { grade: '5', count: gradeStats.gradeDistribution[5], color: '#10B981' },
       { grade: '4', count: gradeStats.gradeDistribution[4], color: '#3B82F6' },
@@ -399,7 +518,7 @@ export default function ParentStats() {
       { grade: '2', count: gradeStats.gradeDistribution[2], color: '#EF4444' },
       { grade: '1', count: gradeStats.gradeDistribution[1], color: '#DC2626' }
     ];
-  };
+  }, [gradeStats]);
 
   // Oblicz odznaki dla przypisanego ucznia
   useEffect(() => {
@@ -586,10 +705,10 @@ export default function ParentStats() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#F4F6FB] via-white to-[#E8ECFF] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 py-8 px-4 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen overflow-hidden flex flex-col bg-gradient-to-br from-[#F4F6FB] via-white to-[#E8ECFF] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 w-full" style={{ maxWidth: '100vw' }}>
+      <div className="flex-1 overflow-y-auto max-w-7xl mx-auto w-full py-8 px-4 min-h-0">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-8 flex-shrink-0">
           <div className="flex items-center gap-4">
             <button
               onClick={() => router.back()}
@@ -969,7 +1088,7 @@ export default function ParentStats() {
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 text-center">Rozkład ocen</h3>
                 <div className="space-y-4">
-                  {getGradeDistributionData().map((item) => (
+                  {getGradeDistributionData.map((item) => (
                     <div key={item.grade} className="flex items-center gap-4">
                       <div className="w-8 text-sm font-medium text-gray-700 dark:text-gray-300">
                         {item.grade}

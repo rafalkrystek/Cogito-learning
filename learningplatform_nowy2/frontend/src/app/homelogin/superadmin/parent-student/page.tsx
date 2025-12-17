@@ -21,7 +21,10 @@ interface ParentStudent {
 interface User {
   id: string;
   email: string;
-  username: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
   role: string;
 }
 
@@ -91,10 +94,26 @@ export default function ParentStudentManagement() {
         ]);
 
         parentsData = parentsSnapshot.docs.map(
-          (snap) => ({ id: snap.id, ...snap.data() } as User)
+          (snap) => {
+            const data = snap.data();
+            return { 
+              id: snap.id, 
+              ...data,
+              // Upewnij się, że mamy username jako fallback
+              username: data.username || data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Nieznany użytkownik'
+            } as User;
+          }
         );
         studentsData = studentsSnapshot.docs.map(
-          (snap) => ({ id: snap.id, ...snap.data() } as User)
+          (snap) => {
+            const data = snap.data();
+            return { 
+              id: snap.id, 
+              ...data,
+              // Upewnij się, że mamy username jako fallback
+              username: data.username || data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Nieznany użytkownik'
+            } as User;
+          }
         );
 
         setSessionCache(cacheKeyParents, parentsData);
@@ -133,45 +152,92 @@ export default function ParentStudentManagement() {
     });
   }, [fetchData]);
 
+  // Helper function to get display name
+  const getDisplayName = useCallback((user: User | undefined): string => {
+    if (!user) return '';
+    return user.username || user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Nieznany użytkownik';
+  }, []);
+
   // Memoized filter functions for search
   const filteredParents = useMemo(() => {
     if (!parentSearch.trim()) return parents;
     const searchLower = parentSearch.toLowerCase();
-    return parents.filter(parent => 
-      parent.username?.toLowerCase().includes(searchLower) ||
-      parent.email?.toLowerCase().includes(searchLower)
-    );
-  }, [parents, parentSearch]);
+    return parents.filter(parent => {
+      const displayName = getDisplayName(parent);
+      return displayName.toLowerCase().includes(searchLower) ||
+        parent.email?.toLowerCase().includes(searchLower) ||
+        parent.firstName?.toLowerCase().includes(searchLower) ||
+        parent.lastName?.toLowerCase().includes(searchLower);
+    });
+  }, [parents, parentSearch, getDisplayName]);
 
   const filteredStudents = useMemo(() => {
     if (!studentSearch.trim()) return students;
     const searchLower = studentSearch.toLowerCase();
-    return students.filter(student => 
-      student.username?.toLowerCase().includes(searchLower) ||
-      student.email?.toLowerCase().includes(searchLower)
-    );
-  }, [students, studentSearch]);
+    return students.filter(student => {
+      const displayName = getDisplayName(student);
+      return displayName.toLowerCase().includes(searchLower) ||
+        student.email?.toLowerCase().includes(searchLower) ||
+        student.firstName?.toLowerCase().includes(searchLower) ||
+        student.lastName?.toLowerCase().includes(searchLower);
+    });
+  }, [students, studentSearch, getDisplayName]);
 
   // Memoized helper functions with Map for O(1) lookup
+  // Używamy zarówno ID dokumentu jak i UID z danych (jeśli istnieje)
   const parentsMap = useMemo(() => {
     const map = new Map<string, User>();
-    parents.forEach(p => map.set(p.id, p));
+    parents.forEach(p => {
+      map.set(p.id, p);
+      // Jeśli dokument ma pole uid, dodaj również pod tym kluczem
+      const uid = (p as any).uid;
+      if (uid && uid !== p.id) {
+        map.set(uid, p);
+      }
+    });
     return map;
   }, [parents]);
 
   const studentsMap = useMemo(() => {
     const map = new Map<string, User>();
-    students.forEach(s => map.set(s.id, s));
+    students.forEach(s => {
+      map.set(s.id, s);
+      // Jeśli dokument ma pole uid, dodaj również pod tym kluczem
+      const uid = (s as any).uid;
+      if (uid && uid !== s.id) {
+        map.set(uid, s);
+      }
+    });
     return map;
   }, [students]);
 
   const getParentById = useCallback((parentId: string) => {
-    return parentsMap.get(parentId);
-  }, [parentsMap]);
+    // Najpierw spróbuj znaleźć po ID/UID
+    let parent = parentsMap.get(parentId);
+    if (parent) return parent;
+    
+    // Jeśli nie znaleziono, spróbuj znaleźć po emailu (jeśli parentId to email)
+    if (parentId.includes('@')) {
+      parent = parents.find(p => p.email === parentId);
+      if (parent) return parent;
+    }
+    
+    return undefined;
+  }, [parentsMap, parents]);
 
   const getStudentById = useCallback((studentId: string) => {
-    return studentsMap.get(studentId);
-  }, [studentsMap]);
+    // Najpierw spróbuj znaleźć po ID/UID
+    let student = studentsMap.get(studentId);
+    if (student) return student;
+    
+    // Jeśli nie znaleziono, spróbuj znaleźć po emailu (jeśli studentId to email)
+    if (studentId.includes('@')) {
+      student = students.find(s => s.email === studentId);
+      if (student) return student;
+    }
+    
+    return undefined;
+  }, [studentsMap, students]);
 
   // Paginated assignments for lazy loading
   const paginatedAssignments = useMemo(() => {
@@ -395,7 +461,7 @@ export default function ParentStudentManagement() {
               <option value="">Wybierz rodzica...</option>
               {filteredParents.slice(0, 100).map((parent) => (
                 <option key={parent.id} value={parent.id}>
-                  {parent.username} ({parent.email})
+                  {getDisplayName(parent)} ({parent.email})
                 </option>
               ))}
               {filteredParents.length > 100 && (
@@ -442,7 +508,7 @@ export default function ParentStudentManagement() {
               <option value="">Wybierz ucznia...</option>
               {filteredStudents.slice(0, 100).map((student) => (
                 <option key={student.id} value={student.id}>
-                  {student.username} ({student.email})
+                  {getDisplayName(student)} ({student.email})
                 </option>
               ))}
               {filteredStudents.length > 100 && (
@@ -522,32 +588,34 @@ export default function ParentStudentManagement() {
                   {paginatedAssignments.map((ps) => {
                     const student = getStudentById(ps.student);
                     const parent = getParentById(ps.parent);
+                    const studentName = getDisplayName(student);
+                    const parentName = getDisplayName(parent);
                     return (
                       <tr key={ps.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
                           <div className="flex items-center">
                             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
                               <span className="text-blue-600 font-semibold text-xs">
-                                {student?.username?.charAt(0)?.toUpperCase() || '?'}
+                                {studentName.charAt(0)?.toUpperCase() || '?'}
                               </span>
                             </div>
                             <div>
-                              <p className="font-medium text-gray-900">{student?.username || 'Nieznany uczeń'}</p>
+                              <p className="font-medium text-gray-900">{studentName || 'Nieznany uczeń'}</p>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm text-gray-600">
-                          {student?.email || 'Brak emaila'}
+                          {student?.email || ps.student_email || 'Brak emaila'}
                         </td>
                         <td className="px-6 py-4 border-b border-gray-200 bg-white text-sm">
                           <div className="flex items-center">
                             <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
                               <span className="text-green-600 font-semibold text-xs">
-                                {parent?.username?.charAt(0)?.toUpperCase() || '?'}
+                                {parentName.charAt(0)?.toUpperCase() || '?'}
                               </span>
                             </div>
                             <div>
-                              <p className="font-medium text-gray-900">{parent?.username || 'Nieznany rodzic'}</p>
+                              <p className="font-medium text-gray-900">{parentName || 'Nieznany rodzic'}</p>
                             </div>
                           </div>
                         </td>

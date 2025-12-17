@@ -1,9 +1,38 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback } from 'react';
+import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuth } from '@/context/AuthContext';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Event {
   id: string;
@@ -67,14 +96,25 @@ export default function ParentDashboard() {
   const [loading, setLoading] = useState(true);
   const [showElectiveOnly, setShowElectiveOnly] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!user) {
-        setLoading(false);
-        return;
-      }
+  const fetchData = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
-      try {
+    const cacheKey = `parent_schedule_${user.uid}`;
+    const cached = getSessionCache<{ events: Event[]; courses: Map<string, { courseType?: string }>; studentId: string; studentName: string }>(cacheKey);
+    
+    if (cached) {
+      setEvents(cached.events);
+      setCourses(cached.courses);
+      setAssignedStudent({ id: cached.studentId, name: cached.studentName });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      await measureAsync('ParentSchedule:fetchData', async () => {
         // 1. Znajdź przypisanego ucznia
         const parentStudentsRef = collection(db, 'parent_students');
         const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
@@ -88,25 +128,25 @@ export default function ParentDashboard() {
 
         const studentId = parentStudentsSnapshot.docs[0].data().student;
 
-        // 2. Pobierz dane ucznia
-        const usersRef = collection(db, 'users');
-        const studentQuery = query(usersRef, where('uid', '==', studentId));
-        const studentSnapshot = await getDocs(studentQuery);
+        // 2. Pobierz dane ucznia i wydarzenia równolegle
+        const [studentSnapshot, eventsSnapshot, coursesSnapshot] = await Promise.all([
+          getDocs(query(collection(db, 'users'), where('uid', '==', studentId))),
+          getDocs(query(collection(db, 'events'), limit(500))), // Limit events
+          getDocs(query(collection(db, 'courses'), limit(200))) // Limit courses
+        ]);
 
+        let studentName = 'Uczeń';
         if (!studentSnapshot.empty) {
           const studentData = studentSnapshot.docs[0].data();
+          studentName = `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.username || 'Uczeń';
           setAssignedStudent({
             id: studentId,
-            name: `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.username || 'Uczeń'
+            name: studentName
           });
         }
 
-        // 3. Pobierz wydarzenia dla ucznia
-        const eventsRef = collection(db, 'events');
-        const eventsSnapshot = await getDocs(eventsRef);
-        const allEvents = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-
         // Filtruj wydarzenia dla przypisanego ucznia
+        const allEvents = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
         const studentEvents = allEvents.filter(event => {
           if (event.assignedTo && event.assignedTo.includes(studentId)) {
             return true;
@@ -120,8 +160,6 @@ export default function ParentDashboard() {
         setEvents(studentEvents);
 
         // Pobierz kursy aby sprawdzić typy
-        const coursesRef = collection(db, 'courses');
-        const coursesSnapshot = await getDocs(coursesRef);
         const coursesMap = new Map<string, { courseType?: string }>();
         coursesSnapshot.docs.forEach(doc => {
           const data = doc.data();
@@ -129,16 +167,25 @@ export default function ParentDashboard() {
         });
         setCourses(coursesMap);
 
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching data:', err);
-        setError('Wystąpił błąd podczas pobierania danych.');
-        setLoading(false);
-      }
-    };
-
-    fetchData();
+        // Cache data
+        setSessionCache(cacheKey, {
+          events: studentEvents,
+          courses: coursesMap,
+          studentId,
+          studentName
+        });
+      });
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError('Wystąpił błąd podczas pobierania danych.');
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Funkcje nawigacji tygodnia (zakomentowane - nie używane obecnie)
   // const prevWeek = () => {
@@ -169,8 +216,8 @@ export default function ParentDashboard() {
   //   return `${monday.getDate()}-${friday.getDate()} ${monthsPl[monday.getMonth()]}${monday.getMonth() !== friday.getMonth() ? ' - ' + friday.getDate() + ' ' + monthsPl[friday.getMonth()] : ''}`;
   // };
 
-  // Funkcja sprawdzająca czy zajęcia są fakultatywne
-  const isElectiveLesson = (event: Event): boolean => {
+  // Funkcja sprawdzająca czy zajęcia są fakultatywne - memoized
+  const isElectiveLesson = useCallback((event: Event): boolean => {
     // Sprawdź czy event ma flagę fakultatywny
     if (event.type === 'fakultatywny' || event.type === 'elective') return true;
     // Sprawdź czy event jest powiązany z kursem fakultatywnym
@@ -179,10 +226,10 @@ export default function ParentDashboard() {
       if (course?.courseType === 'fakultatywny') return true;
     }
     return false;
-  };
+  }, [courses]);
 
-  // Funkcja pobierająca zajęcia dla danego dnia i slotu czasowego
-  const getLessonsForSlot = (dayIndex: number, slot: typeof timeSlots[0]): ScheduleLesson[] => {
+  // Funkcja pobierająca zajęcia dla danego dnia i slotu czasowego - memoized
+  const getLessonsForSlot = useCallback((dayIndex: number, slot: typeof timeSlots[0]): ScheduleLesson[] => {
     // Oblicz datę dla danego dnia tygodnia (0 = poniedziałek, 4 = piątek)
     const monday = new Date(currentWeek);
     const dayOfWeek = (monday.getDay() + 6) % 7; // Konwertuj na poniedziałek = 0
@@ -265,7 +312,7 @@ export default function ParentDashboard() {
       room: event.room,
       teacher: event.description
     }));
-  };
+  }, [events, currentWeek, showElectiveOnly, isElectiveLesson]);
 
   if (loading) {
     return (
@@ -276,18 +323,18 @@ export default function ParentDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
+    <div className="h-screen overflow-hidden flex flex-col bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full" style={{ maxWidth: '100vw' }}>
       {/* Header bez przycisku powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+      <div className="flex-shrink-0 bg-white/80 backdrop-blur-lg border-b border-white/20 px-3 sm:px-4 lg:px-6 py-2">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Plan zajęć
           </h1>
           
           {/* Switch na zajęcia fakultatywne */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-sm text-gray-700 hidden sm:inline">Tylko zajęcia fakultatywne</span>
+              <span className="text-xs text-gray-700 hidden sm:inline">Tylko zajęcia fakultatywne</span>
               <span className="text-xs text-gray-700 sm:hidden">Fakultatywne</span>
               <div className="relative">
                 <input
@@ -296,10 +343,10 @@ export default function ParentDashboard() {
                   onChange={(e) => setShowElectiveOnly(e.target.checked)}
                   className="sr-only"
                 />
-                <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${
+                <div className={`w-10 h-5 rounded-full transition-colors duration-200 ${
                   showElectiveOnly ? 'bg-blue-600' : 'bg-gray-300'
                 }`}>
-                  <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
+                  <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
                     showElectiveOnly ? 'translate-x-5' : 'translate-x-0.5'
                   } mt-0.5`}></div>
                 </div>
@@ -309,79 +356,69 @@ export default function ParentDashboard() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-4">
-        <div className="space-y-4">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-              {error}
-            </div>
-          )}
+      <div className="flex-1 overflow-hidden flex flex-col px-2 sm:px-3 lg:px-4 py-1 min-h-0">
+        {error && (
+          <div className="flex-shrink-0 bg-red-50 border border-red-200 text-red-700 px-3 py-1.5 rounded-lg mb-1 text-xs">
+            {error}
+          </div>
+        )}
 
-          <div className="w-full">
-            {/* Desktop View - Schedule Grid - Zmniejszona rozdzielczość */}
-            <div className="hidden md:block w-full border border-slate-200 rounded-3xl overflow-hidden shadow-xl bg-white">
-              <div className="grid grid-cols-6" style={{ maxHeight: 'calc(100vh - 250px)', fontSize: '0.75rem' }}>
-                {/* Enhanced Headers */}
-                <div className="font-bold p-4 md:p-6 h-16 sm:h-20 text-center border-b border-r bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-center">
-                  <span className="text-sm md:text-base lg:text-xl">Godzina</span>
+        {/* Desktop View - Schedule Grid */}
+        <div className="hidden md:block w-full h-full border border-slate-200 rounded-lg overflow-hidden shadow-md bg-white flex-1 min-h-0">
+          <div className="grid grid-cols-6 h-full" style={{ fontSize: '1rem' }}>
+              {/* Enhanced Headers */}
+              <div className="font-bold p-1.5 h-10 text-center border-b border-r bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-center">
+                <span className="text-[15px]">Godzina</span>
+              </div>
+              {daysOfWeek.map((day, index) => (
+                <div key={index} className="font-bold p-1.5 h-10 text-center border-b border-r bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-center">
+                  <span className="text-[15px]">{day}</span>
                 </div>
-                {daysOfWeek.map((day, index) => (
-                  <div key={index} className="font-bold p-4 md:p-6 h-16 sm:h-20 text-center border-b border-r bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-center">
-                    <span className="text-sm md:text-base lg:text-xl">{day}</span>
-                  </div>
-                ))}
+              ))}
 
                 {/* Enhanced Time Grid */}
                 <div className="contents">
                   {timeSlots.map((slot, index) => (
                     <React.Fragment key={index}>
                       {/* Enhanced Time Column */}
-                      <div className="bg-gradient-to-br from-slate-50 to-blue-50 border-r border-b border-slate-200 p-3 md:p-4 lg:p-6 flex flex-col justify-center hover:bg-gradient-to-br hover:from-blue-50 hover:to-indigo-50 transition-all duration-200">
-                        <div className="text-xs md:text-sm lg:text-lg font-bold text-blue-600 mb-1 sm:mb-2 whitespace-nowrap">
+                      <div className="bg-gradient-to-br from-slate-50 to-blue-50 border-r border-b border-slate-200 p-1.5 flex flex-col justify-center hover:bg-gradient-to-br hover:from-blue-50 hover:to-indigo-50 transition-all duration-200">
+                        <div className="text-[14px] font-bold text-blue-600 mb-0.5 whitespace-nowrap">
                           {slot.startTime} - {slot.endTime}
                         </div>
-                        <div className="text-xs md:text-sm text-slate-500 font-medium whitespace-nowrap">
-                          Lekcja {slot.label}
+                        <div className="text-[12px] text-slate-500 font-medium whitespace-nowrap">
+                          {slot.label}
                         </div>
                       </div>
 
-                      {/* Enhanced Day Cells */}
+                      {/* Enhanced Day Cells - zmniejszone */}
                       {[0, 1, 2, 3, 4].map((dayIndex) => {
                         const lessons = getLessonsForSlot(dayIndex, slot);
                         return (
                           <div 
                             key={`${index}-${dayIndex}`} 
-                            className="border-r border-b border-slate-200 p-2 md:p-3 lg:p-6 bg-white hover:bg-gradient-to-br hover:from-slate-50 hover:to-blue-50 transition-all duration-200 group relative"
+                            className="border-r border-b border-slate-200 p-0.5 bg-white hover:bg-gradient-to-br hover:from-slate-50 hover:to-blue-50 transition-all duration-200 group relative overflow-y-auto max-h-full scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
                           >
                             {lessons.length > 0 ? (
-                              <div className="space-y-1 sm:space-y-2">
+                              <div className="space-y-1">
                                 {lessons.map((lesson) => (
                                   <div 
                                     key={lesson.id}
-                                    className="bg-blue-100 text-blue-800 p-2 md:p-3 rounded-lg border border-blue-200 hover:bg-blue-200 transition-colors"
+                                    className="bg-blue-100 text-blue-800 p-1.5 rounded border border-blue-200 hover:bg-blue-200 transition-colors"
                                   >
-                                    <div className="font-semibold text-[10px] md:text-xs lg:text-sm mb-0.5 sm:mb-1 break-words">{lesson.subject}</div>
-                                    {lesson.time && (
-                                      <div className="text-[9px] md:text-xs text-blue-600 mb-0.5 sm:mb-1 whitespace-nowrap overflow-hidden text-ellipsis">{lesson.time}</div>
-                                    )}
+                                    <div className="font-semibold text-[14px] mb-0.5 break-words leading-tight">{lesson.subject}</div>
                                     {lesson.room && (
-                                      <div className="text-[9px] md:text-xs text-blue-500 whitespace-nowrap overflow-hidden text-ellipsis">Sala: {lesson.room}</div>
+                                      <div className="text-[12px] text-blue-500 whitespace-nowrap overflow-hidden text-ellipsis">Sala: {lesson.room}</div>
                                     )}
                                     {lesson.teacher && (
-                                      <div className="text-[9px] md:text-xs text-blue-500 mt-0.5 sm:mt-1 break-words line-clamp-2">{lesson.teacher}</div>
+                                      <div className="text-[12px] text-blue-500 mt-0.5 break-words line-clamp-1">{lesson.teacher}</div>
                                     )}
                                   </div>
                                 ))}
                               </div>
                             ) : (
-                              <>
-                                <div className="text-xs md:text-sm text-slate-400 mb-1 sm:mb-3 font-medium whitespace-nowrap">{slot.startTime}</div>
-                                <div className="flex items-center justify-between">
-                                  <div className="text-[10px] md:text-xs text-slate-300 group-hover:text-slate-400 transition-colors duration-200 whitespace-nowrap">
-                                    Brak zajęć
-                                  </div>
-                                </div>
-                              </>
+                              <div className="text-[12px] text-slate-300 group-hover:text-slate-400 transition-colors duration-200 whitespace-nowrap text-center">
+                                -
+                              </div>
                             )}
                           </div>
                         );
@@ -389,12 +426,12 @@ export default function ParentDashboard() {
                     </React.Fragment>
                   ))}
                 </div>
-              </div>
-            </div>
+          </div>
+        </div>
 
-            {/* Mobile View - Day Cards */}
-            <div className="md:hidden space-y-4">
-              {[0, 1, 2, 3, 4].map((dayIndex) => {
+        {/* Mobile View - Day Cards */}
+        <div className="md:hidden space-y-2 overflow-hidden flex-1 min-h-0">
+          {[0, 1, 2, 3, 4].map((dayIndex) => {
                 const monday = new Date(currentWeek);
                 const dayOfWeek = (monday.getDay() + 6) % 7;
                 monday.setDate(monday.getDate() - dayOfWeek);
@@ -457,9 +494,7 @@ export default function ParentDashboard() {
                     </div>
                   </div>
                 );
-              })}
-            </div>
-          </div>
+          })}
         </div>
       </div>
     </div>

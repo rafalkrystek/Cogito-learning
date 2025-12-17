@@ -1,9 +1,38 @@
 'use client';
-import React, { useEffect, useState, useCallback } from 'react';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { collection, getDocs, query, where, doc, getDoc, limit, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { BookOpen, Award, Calendar, User } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Grade {
   id: string;
@@ -46,87 +75,98 @@ export default function ParentGrades() {
   const [attendanceData, setAttendanceData] = useState<{[subject: string]: {present: number, total: number, percentage: number}}>({});
   const [globalAttendance, setGlobalAttendance] = useState<{present: number, total: number, percentage: number}>({present: 0, total: 0, percentage: 0});
 
-  useEffect(() => {
+  const fetchStudent = useCallback(async () => {
     if (!user) return;
     
-    // Znajdź przypisanego ucznia
-    const fetchStudent = async () => {
-      try {
-        const parentStudentsRef = collection(db, 'parent_students');
-        const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
-        const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
+    const cacheKey = `parent_grades_student_${user.uid}`;
+    const cached = getSessionCache<{ studentId: string; studentEmail: string; displayName: string }>(cacheKey);
+    
+    if (cached) {
+      setStudentId(cached.studentId);
+      setStudentEmail(cached.studentEmail);
+      setDisplayName(cached.displayName);
+      return;
+    }
 
-        if (parentStudentsSnapshot.empty) {
-          setLoading(false);
-          return;
-        }
+    try {
+      const parentStudentsRef = collection(db, 'parent_students');
+      const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
+      const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
 
-        const foundStudentId = parentStudentsSnapshot.docs[0].data().student;
-        setStudentId(foundStudentId);
-
-        // Pobierz dane ucznia
-        const studentDoc = await getDoc(doc(db, 'users', foundStudentId));
-        if (studentDoc.exists()) {
-          const studentData = studentDoc.data();
-          setStudentEmail(studentData.email);
-          setDisplayName(studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || '');
-        }
-      } catch (err) {
-        console.error('Error fetching student:', err);
+      if (parentStudentsSnapshot.empty) {
         setLoading(false);
+        return;
       }
-    };
 
-    fetchStudent();
+      const foundStudentId = parentStudentsSnapshot.docs[0].data().student;
+      
+      // Pobierz dane ucznia
+      const studentDoc = await getDoc(doc(db, 'users', foundStudentId));
+      if (studentDoc.exists()) {
+        const studentData = studentDoc.data();
+        const studentEmailValue = studentData.email;
+        const displayNameValue = studentData.displayName || `${studentData.firstName || ''} ${studentData.lastName || ''}`.trim() || studentData.email || '';
+        
+        setStudentId(foundStudentId);
+        setStudentEmail(studentEmailValue);
+        setDisplayName(displayNameValue);
+        
+        // Cache student data
+        setSessionCache(cacheKey, {
+          studentId: foundStudentId,
+          studentEmail: studentEmailValue,
+          displayName: displayNameValue
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching student:', err);
+      setLoading(false);
+    }
   }, [user]);
 
-  // Pobierz kursy ucznia
   useEffect(() => {
-    const fetchUserCourses = async () => {
-      if (!studentId) return;
-      
-      try {
-        // Pobierz kursy gdzie assignedUsers zawiera studentId
-        const coursesByUidQuery = query(
-          collection(db, 'courses'),
-          where('assignedUsers', 'array-contains', studentId)
+    fetchStudent();
+  }, [fetchStudent]);
+
+  // Pobierz kursy ucznia
+  const fetchUserCourses = useCallback(async () => {
+    if (!studentId) return;
+    
+    const cacheKey = `parent_grades_courses_${studentId}`;
+    const cached = getSessionCache<Course[]>(cacheKey);
+    
+    if (cached) {
+      setUserCourses(cached);
+      return;
+    }
+    
+    try {
+      await measureAsync('ParentGrades:fetchUserCourses', async () => {
+        // Pobierz kursy równolegle
+        const [coursesByUidSnapshot, coursesByEmailSnapshot, gradesSnapshot] = await Promise.all([
+          getDocs(query(collection(db, 'courses'), where('assignedUsers', 'array-contains', studentId), limit(100))),
+          studentEmail ? getDocs(query(collection(db, 'courses'), where('assignedUsers', 'array-contains', studentEmail), limit(100))) : Promise.resolve({ docs: [] } as any),
+          getDocs(query(collection(db, 'grades'), where('user_id', '==', studentId), limit(200)))
+        ]);
+        
+        const coursesByUidList = coursesByUidSnapshot.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+        const coursesByEmailList = coursesByEmailSnapshot.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+        const userGrades = gradesSnapshot.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Grade));
+
+        // Pobierz unikalne course_id z ocen
+        const courseIdsFromGrades = new Set<string>();
+        userGrades.forEach(grade => {
+          if (grade.course_id) courseIdsFromGrades.add(grade.course_id);
+        });
+
+        // Pobierz kursy z ocenami równolegle
+        const courseQueries = Array.from(courseIdsFromGrades).slice(0, 50).map(courseId =>
+          getDoc(doc(db, 'courses', courseId))
         );
-        const coursesByUidSnapshot = await getDocs(coursesByUidQuery);
-        const coursesByUidList = coursesByUidSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        // Pobierz kursy gdzie assignedUsers zawiera studentEmail
-        let coursesByEmailList: any[] = [];
-        if (studentEmail) {
-          const coursesByEmailQuery = query(
-            collection(db, 'courses'),
-            where('assignedUsers', 'array-contains', studentEmail)
-          );
-          const coursesByEmailSnapshot = await getDocs(coursesByEmailQuery);
-          coursesByEmailList = coursesByEmailSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
-
-        // DODATKOWO: Pobierz wszystkie kursy i sprawdź które mają oceny dla tego użytkownika
-        const allCoursesSnapshot = await getDocs(collection(db, 'courses'));
-        const allCoursesList: Course[] = allCoursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        // Sprawdź które kursy mają oceny dla tego użytkownika
-        const gradesQuery = query(
-          collection(db, 'grades'),
-          where('user_id', '==', studentId)
-        );
-        const gradesSnapshot = await getDocs(gradesQuery);
-        const userGrades = gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
-
-        // Znajdź kursy z ocenami
-        const coursesWithGrades: Course[] = [];
-        for (const grade of userGrades) {
-          if (grade.course_id) {
-            const courseWithGrade = allCoursesList.find(course => course.id === grade.course_id);
-            if (courseWithGrade && !coursesWithGrades.find(c => c.id === courseWithGrade.id)) {
-              coursesWithGrades.push(courseWithGrade);
-            }
-          }
-        }
+        const courseDocs = await Promise.all(courseQueries);
+        const coursesWithGrades = courseDocs
+          .filter(doc => doc.exists())
+          .map(doc => ({ id: doc.id, ...doc.data() } as Course));
 
         // Połącz wszystkie kursy: assigned + z ocenami
         const allCourses = [...coursesByUidList, ...coursesByEmailList, ...coursesWithGrades];
@@ -135,44 +175,54 @@ export default function ParentGrades() {
         );
         
         setUserCourses(uniqueCourses);
-      } catch (error) {
-        console.error('❌ Error fetching user courses:', error);
-        setUserCourses([]);
-      }
-    };
-
-    fetchUserCourses();
+        setSessionCache(cacheKey, uniqueCourses);
+      });
+    } catch (error) {
+      console.error('❌ Error fetching user courses:', error);
+      setUserCourses([]);
+    }
   }, [studentId, studentEmail]);
+
+  useEffect(() => {
+    fetchUserCourses();
+  }, [fetchUserCourses]);
 
   const fetchGrades = useCallback(async () => {
     if (!studentId) return;
+    
+    const cacheKey = `parent_grades_${studentId}`;
+    const cached = getSessionCache<Grade[]>(cacheKey);
+    
+    if (cached) {
+      setGrades(cached);
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
 
-    // Pobierz wszystkie oceny użytkownika
-    const gradesQuery = query(collection(db, 'grades'), where('user_id', '==', studentId));
-    const gradesSnapshot = await getDocs(gradesQuery);
-    const gradesList = gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+    await measureAsync('ParentGrades:fetchGrades', async () => {
+      // Pobierz wszystkie oceny równolegle
+      const [gradesByUserId, gradesByEmail, gradesByStudentId] = await Promise.all([
+        getDocs(query(collection(db, 'grades'), where('user_id', '==', studentId), limit(500))),
+        studentEmail ? getDocs(query(collection(db, 'grades'), where('studentEmail', '==', studentEmail), limit(500))) : Promise.resolve({ docs: [] } as any),
+        getDocs(query(collection(db, 'grades'), where('studentId', '==', studentId), limit(500)))
+      ]);
 
-    // Pobierz również oceny gdzie studentEmail jest równy email użytkownika
-    let gradesByEmailList: Grade[] = [];
-    if (studentEmail) {
-      const gradesByEmailQuery = query(collection(db, 'grades'), where('studentEmail', '==', studentEmail));
-      const gradesByEmailSnapshot = await getDocs(gradesByEmailQuery);
-      gradesByEmailList = gradesByEmailSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
-    }
+      const gradesList = gradesByUserId.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Grade));
+      const gradesByEmailList = gradesByEmail.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Grade));
+      const gradesByStudentIdList = gradesByStudentId.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Grade));
 
-    // Pobierz również oceny gdzie studentId jest równy studentId
-    const gradesByStudentIdQuery = query(collection(db, 'grades'), where('studentId', '==', studentId));
-    const gradesByStudentIdSnapshot = await getDocs(gradesByStudentIdQuery);
-    const gradesByStudentIdList = gradesByStudentIdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+      // Połącz obie listy i usuń duplikaty
+      const allGrades = [...gradesList, ...gradesByEmailList, ...gradesByStudentIdList];
+      const uniqueGrades = allGrades.filter((grade, index, self) =>
+        index === self.findIndex(g => g.id === grade.id)
+      );
 
-    // Połącz obie listy i usuń duplikaty
-    const allGrades = [...gradesList, ...gradesByEmailList, ...gradesByStudentIdList];
-    const uniqueGrades = allGrades.filter((grade, index, self) =>
-      index === self.findIndex(g => g.id === grade.id)
-    );
-
-    setGrades(uniqueGrades);
+      setGrades(uniqueGrades);
+      setSessionCache(cacheKey, uniqueGrades);
+    });
+    
     setLoading(false);
   }, [studentId, studentEmail]);
 
@@ -181,37 +231,52 @@ export default function ParentGrades() {
     fetchGrades();
   }, [studentId, studentEmail, fetchGrades]);
 
-  // Grupowanie ocen po przedmiocie i sortowanie po dacie rosnąco
-  const groupedGrades: GroupedGrades = grades.reduce((acc, grade) => {
-    const subject = grade.subject || 'Inne';
-    if (!acc[subject]) acc[subject] = [];
-    acc[subject].push(grade);
-    return acc;
-  }, {} as GroupedGrades);
+  // Grupowanie ocen po przedmiocie i sortowanie po dacie rosnąco - memoized
+  const groupedGrades: GroupedGrades = useMemo(() => {
+    return grades.reduce((acc, grade) => {
+      const subject = grade.subject || 'Inne';
+      if (!acc[subject]) acc[subject] = [];
+      acc[subject].push(grade);
+      return acc;
+    }, {} as GroupedGrades);
+  }, [grades]);
 
-  // Funkcja do określania typu kursu (obowiązkowy/fakultatywny)
-  const getCourseType = (subject: string): 'obowiązkowy' | 'fakultatywny' => {
+  // Funkcja do określania typu kursu (obowiązkowy/fakultatywny) - memoized
+  const getCourseType = useCallback((subject: string): 'obowiązkowy' | 'fakultatywny' => {
     const course = userCourses.find(c => c.title === subject);
     return course?.courseType || 'obowiązkowy'; // domyślnie obowiązkowy
-  };
+  }, [userCourses]);
 
-  // Funkcja do obliczania frekwencji dla przedmiotu
-  const calculateAttendanceForSubject = (subject: string, studentId: string | null): {present: number, total: number, percentage: number} => {
+  // Funkcja do obliczania frekwencji dla przedmiotu - memoized
+  const calculateAttendanceForSubject = useCallback((subject: string, studentId: string | null): {present: number, total: number, percentage: number} => {
     if (!studentId || !attendanceData[subject]) {
       return {present: 0, total: 0, percentage: 0};
     }
     return attendanceData[subject];
-  };
+  }, [attendanceData]);
 
   // Pobierz frekwencję z events
-  useEffect(() => {
-    const fetchAttendance = async () => {
-      if (!studentId) return;
+  const fetchAttendance = useCallback(async () => {
+    if (!studentId) return;
 
-      try {
-        // Pobierz wszystkie wydarzenia (events) dla ucznia
+    const cacheKey = `parent_attendance_${studentId}`;
+    const cached = getSessionCache<{[subject: string]: {present: number, total: number, percentage: number}}>(cacheKey);
+    
+    if (cached) {
+      setAttendanceData(cached);
+      // Oblicz globalną frekwencję
+      const globalPresent = Object.values(cached).reduce((sum, att) => sum + att.present, 0);
+      const globalTotal = Object.values(cached).reduce((sum, att) => sum + att.total, 0);
+      const globalPercentage = globalTotal > 0 ? Math.round((globalPresent / globalTotal) * 100) : 0;
+      setGlobalAttendance({ present: globalPresent, total: globalTotal, percentage: globalPercentage });
+      return;
+    }
+
+    try {
+      await measureAsync('ParentGrades:fetchAttendance', async () => {
+        // Pobierz wydarzenia z limitem zamiast wszystkich
         const eventsRef = collection(db, 'events');
-        const eventsSnapshot = await getDocs(eventsRef);
+        const eventsSnapshot = await getDocs(query(eventsRef, limit(500)));
         const allEvents = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         // Filtruj wydarzenia dla ucznia
@@ -261,6 +326,7 @@ export default function ParentGrades() {
         });
 
         setAttendanceData(attendanceBySubject);
+        setSessionCache(cacheKey, attendanceBySubject);
         
         // Oblicz globalną frekwencję
         const globalPercentage = globalTotal > 0 ? Math.round((globalPresent / globalTotal) * 100) : 0;
@@ -269,47 +335,56 @@ export default function ParentGrades() {
           total: globalTotal,
           percentage: globalPercentage
         });
-      } catch (error) {
-        console.error('Error fetching attendance:', error);
-        // Ustaw domyślne wartości jeśli nie ma danych
-        setGlobalAttendance({present: 0, total: 0, percentage: 0});
-      }
-    };
-
-    fetchAttendance();
+      });
+    } catch (error) {
+      console.error('Error fetching attendance:', error);
+      // Ustaw domyślne wartości jeśli nie ma danych
+      setGlobalAttendance({present: 0, total: 0, percentage: 0});
+    }
   }, [studentId, studentEmail]);
 
-  // Rozdzielenie kursów na obowiązkowe i fakultatywne (włączając kursy bez ocen)
-  const allCourses = [...Object.entries(groupedGrades)];
-  
-  // Dodaj kursy bez ocen do listy
-  userCourses.forEach(course => {
-    const courseTitle = course.title || course.name || 'Nieznany kurs';
-    if (!groupedGrades[courseTitle]) {
-      allCourses.push([courseTitle, []]);
-    }
-  });
+  useEffect(() => {
+    fetchAttendance();
+  }, [fetchAttendance]);
 
-  const mandatoryCourses = allCourses.filter(([subject]) => 
-    getCourseType(subject) === 'obowiązkowy'
-  );
-  const electiveCourses = allCourses.filter(([subject]) => 
-    getCourseType(subject) === 'fakultatywny'
-  );
-
-  
-  // Sortuj oceny w każdym przedmiocie po dacie rosnąco
-  Object.keys(groupedGrades).forEach(subject => {
-    groupedGrades[subject].sort((a, b) => {
-      // Jeśli data nie istnieje, traktuj jako najstarszą
-      if (!a.date) return -1;
-      if (!b.date) return 1;
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
+  // Sortuj oceny w każdym przedmiocie po dacie rosnąco - memoized (PRZED użyciem!)
+  const sortedGroupedGrades = useMemo(() => {
+    const sorted = { ...groupedGrades };
+    Object.keys(sorted).forEach(subject => {
+      sorted[subject] = [...sorted[subject]].sort((a, b) => {
+        // Jeśli data nie istnieje, traktuj jako najstarszą
+        if (!a.date) return -1;
+        if (!b.date) return 1;
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      });
     });
-  });
+    return sorted;
+  }, [groupedGrades]);
 
-  // Funkcja do określania koloru badge na podstawie oceny
-  function getGradeColor(grade: string | number | undefined) {
+  // Rozdzielenie kursów na obowiązkowe i fakultatywne (włączając kursy bez ocen) - memoized
+  const { mandatoryCourses, electiveCourses } = useMemo(() => {
+    const allCourses = [...Object.entries(sortedGroupedGrades)];
+    
+    // Dodaj kursy bez ocen do listy
+    userCourses.forEach(course => {
+      const courseTitle = course.title || course.name || 'Nieznany kurs';
+      if (!sortedGroupedGrades[courseTitle]) {
+        allCourses.push([courseTitle, []]);
+      }
+    });
+
+    const mandatory = allCourses.filter(([subject]) => 
+      getCourseType(subject) === 'obowiązkowy'
+    );
+    const elective = allCourses.filter(([subject]) => 
+      getCourseType(subject) === 'fakultatywny'
+    );
+    
+    return { mandatoryCourses: mandatory, electiveCourses: elective };
+  }, [sortedGroupedGrades, userCourses, getCourseType]);
+
+  // Funkcja do określania koloru badge na podstawie oceny - memoized
+  const getGradeColor = useCallback((grade: string | number | undefined) => {
     const gradeStr = String(grade || '');
     if (gradeStr === '5' || gradeStr === '6') return 'bg-green-500 text-white shadow-green-200';
     if (gradeStr === '4') return 'bg-emerald-500 text-white shadow-emerald-200';
@@ -320,10 +395,10 @@ export default function ParentGrades() {
     if (gradeStr === '-') return 'bg-gray-500 text-white shadow-gray-200';
     // inne przypadki, np. opisowe
     return 'bg-gray-400 text-white shadow-gray-200';
-  }
+  }, []);
 
-  // Funkcja do liczenia średniej ocen (tylko liczbowych)
-  function calculateAverage(grades: Grade[]): string {
+  // Funkcja do liczenia średniej ocen (tylko liczbowych) - memoized
+  const calculateAverage = useCallback((grades: Grade[]): string => {
     const numericGrades = grades
       .map(g => {
         const gradeValue = g.grade || g.value || g.value_grade;
@@ -334,25 +409,29 @@ export default function ParentGrades() {
     if (numericGrades.length === 0) return '-';
     const avg = numericGrades.reduce((a, b) => a + b, 0) / numericGrades.length;
     return avg.toFixed(2);
-  }
+  }, []);
 
-  // Oblicz ogólną średnią tylko z przedmiotów obowiązkowych, które mają oceny
-  const mandatoryCoursesWithGrades = mandatoryCourses.filter(([, subjectGrades]) => 
-    subjectGrades.length > 0
-  );
-  const overallAverage = mandatoryCoursesWithGrades.reduce((total, [, subjectGrades]) => {
-    const avg = calculateAverage(subjectGrades);
-    return avg !== '-' ? total + parseFloat(avg) : total;
-  }, 0) / (mandatoryCoursesWithGrades.length || 1);
-
-  // Oblicz statystyki
-  const mandatorySubjectsCount = mandatoryCourses.length;
-  const electiveSubjectsCount = electiveCourses.length;
+  // Oblicz ogólną średnią tylko z przedmiotów obowiązkowych, które mają oceny - memoized
+  const { overallAverage, mandatorySubjectsCount, electiveSubjectsCount } = useMemo(() => {
+    const mandatoryWithGrades = mandatoryCourses.filter(([, subjectGrades]) => 
+      subjectGrades.length > 0
+    );
+    const overall = mandatoryWithGrades.reduce((total, [, subjectGrades]) => {
+      const avg = calculateAverage(subjectGrades);
+      return avg !== '-' ? total + parseFloat(avg) : total;
+    }, 0) / (mandatoryWithGrades.length || 1);
+    
+    return {
+      overallAverage: overall,
+      mandatorySubjectsCount: mandatoryCourses.length,
+      electiveSubjectsCount: electiveCourses.length
+    };
+  }, [mandatoryCourses, electiveCourses, calculateAverage]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
+    <div className="h-screen overflow-hidden flex flex-col bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full" style={{ maxWidth: '100vw' }}>
       {/* Header - pełna szerokość */}
-      <div className="w-full bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
+      <div className="flex-shrink-0 w-full bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -371,7 +450,7 @@ export default function ParentGrades() {
       </div>
 
       {/* Główny kontener - pełna szerokość */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-8 min-h-0">
         {/* User Profile Section - pełna szerokość */}
         <div className="w-full bg-white rounded-2xl shadow-lg p-6 mb-8 border border-white/20">
           <div className="flex items-center gap-6">

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { collection, doc, getDocs, addDoc, updateDoc, query, where, orderBy, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -62,7 +62,7 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
     const interval = setInterval(updateTimer, 1000); // Aktualizuj co sekundę
     
     return () => clearInterval(interval);
-  }, [currentAttempt, quiz]);
+  }, [currentAttempt, quiz]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user || !quizId) return;

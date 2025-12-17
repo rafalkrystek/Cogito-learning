@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import ParentRoute from '@/components/ParentRoute';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -63,15 +63,34 @@ export default function ParentLayout({
   const notificationRef = useRef<HTMLDivElement>(null);
 
   // Pobierz dane przypisanego ucznia
-  useEffect(() => {
-    const fetchStudentData = async () => {
-      if (!user) return;
+  const fetchStudentData = useCallback(async () => {
+    if (!user) return;
 
+    // Cache helpers
+    const CACHE_TTL_MS = 60 * 1000; // 60s
+    const cacheKey = `parent_selectedStudent_${user.uid}`;
+    
+    if (typeof window !== 'undefined') {
       try {
-        // Importuj potrzebne funkcje Firebase
-        const { collection, getDocs, query, where } = await import('firebase/firestore');
-        const { db } = await import('@/config/firebase');
-        
+        const raw = sessionStorage.getItem(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { timestamp: number; data: Student };
+          if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+            setSelectedStudent(parsed.data);
+            return;
+          }
+        }
+      } catch {
+        // Ignore cache errors
+      }
+    }
+
+    try {
+      const { collection, getDocs, query, where } = await import('firebase/firestore');
+      const { db } = await import('@/config/firebase');
+      const { measureAsync } = await import('@/utils/perf');
+      
+      await measureAsync('ParentLayout:fetchStudentData', async () => {
         // Znajdź przypisanego ucznia
         const parentStudentsRef = collection(db, 'parent_students');
         const parentStudentsQuery = query(parentStudentsRef, where('parent', '==', user.uid));
@@ -87,36 +106,49 @@ export default function ParentLayout({
           
           if (!studentSnapshot.empty) {
             const studentData = studentSnapshot.docs[0].data();
-            setSelectedStudent({
+            const student: Student = {
               id: studentId,
               name: studentData.displayName || studentData.email || 'Nieznany uczeń',
               class: studentData.class || 'Klasa nieznana',
               avatar: studentData.photoURL
-            });
+            };
+            setSelectedStudent(student);
+            
+            // Cache student data
+            if (typeof window !== 'undefined') {
+              try {
+                sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: student }));
+              } catch {
+                // Ignore cache errors
+              }
+            }
           }
         } else {
           // Fallback data jeśli nie ma przypisanego ucznia
-          setSelectedStudent({
+          const fallback: Student = {
             id: '1',
             name: 'Brak przypisanego ucznia',
             class: '',
             avatar: undefined
-          });
+          };
+          setSelectedStudent(fallback);
         }
-      } catch (error) {
-        console.error('Error fetching student data:', error);
-        // Fallback data w przypadku błędu
-        setSelectedStudent({
-          id: '1',
-          name: 'Anna Kowalska',
-          class: 'Klasa 8A',
-          avatar: undefined
-        });
-      }
-    };
-
-    fetchStudentData();
+      });
+    } catch (error) {
+      console.error('Error fetching student data:', error);
+      // Fallback data w przypadku błędu
+      setSelectedStudent({
+        id: '1',
+        name: 'Anna Kowalska',
+        class: 'Klasa 8A',
+        avatar: undefined
+      });
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchStudentData();
+  }, [fetchStudentData]);
 
   // Sprawdź i ustaw custom claims dla rodzica
   useEffect(() => {
@@ -179,39 +211,48 @@ export default function ParentLayout({
   // Pobierz powiadomienia dla rodzica
   const fetchNotifications = useCallback(async () => {
       if (!user || !selectedStudent) {
-        console.log('🔔 DEBUG: fetchNotifications skipped - user:', !!user, 'selectedStudent:', !!selectedStudent);
         return;
       }
 
-      console.log('🔔 DEBUG: ========== FETCHING NOTIFICATIONS ==========');
-      console.log('🔔 DEBUG: User ID:', user.uid);
-      console.log('🔔 DEBUG: Student ID:', selectedStudent.id);
+      // Cache helpers
+      const CACHE_TTL_MS = 60 * 1000; // 60s
+      const cacheKey = `parent_notifications_${user.uid}_${selectedStudent.id}`;
+      
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = sessionStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw) as { timestamp: number; data: Notification[] };
+            if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+              setNotifications(parsed.data);
+              const unreadCount = parsed.data.filter(n => !n.read).length;
+              setUnreadCount(unreadCount);
+              return;
+            }
+          }
+        } catch {
+          // Ignore cache errors
+        }
+      }
 
       try {
         const { collection, getDocs, query, where, limit, doc, getDoc } = await import('firebase/firestore');
         const { db } = await import('@/config/firebase');
-
-        const allNotifications: Notification[] = [];
-
-        // 1. Pobierz powiadomienia z kolekcji notifications dla rodzica
-        const notificationsRef = collection(db, 'notifications');
-        const notificationsQuery = query(
-          notificationsRef, 
-          where('user_id', '==', user.uid)
-        );
-        const notificationsSnapshot = await getDocs(notificationsQuery);
+        const { measureAsync } = await import('@/utils/perf');
         
-        console.log('🔔 DEBUG: Parent notifications found:', notificationsSnapshot.docs.length);
-        notificationsSnapshot.docs.forEach(notificationDoc => {
+        await measureAsync('ParentLayout:fetchNotifications', async () => {
+          const allNotifications: Notification[] = [];
+
+          // 1. Pobierz powiadomienia z kolekcji notifications dla rodzica - z limitem
+          const notificationsRef = collection(db, 'notifications');
+          const [parentNotificationsSnapshot, studentNotificationsSnapshot] = await Promise.all([
+            getDocs(query(notificationsRef, where('user_id', '==', user.uid), limit(50))),
+            getDocs(query(notificationsRef, where('user_id', '==', selectedStudent.id), limit(50)))
+          ]);
+          
+          parentNotificationsSnapshot.docs.forEach(notificationDoc => {
           const notificationData = notificationDoc.data();
           const isRead = notificationData.read === true;
-          
-          console.log(`🔔 DEBUG: Parent notification ${notificationDoc.id}:`, {
-            title: notificationData.title,
-            read: notificationData.read,
-            isRead: isRead,
-            type: typeof notificationData.read
-          });
           
           // Poprawne parsowanie timestamp
           let timestamp = new Date().toISOString();
@@ -250,28 +291,14 @@ export default function ParentLayout({
             event_date: notificationData.event_date,
             event_time: notificationData.event_time
           });
-        });
-
-        // 2. Pobierz powiadomienia z kolekcji notifications dla ucznia (rodzic widzi powiadomienia dziecka)
-        const studentNotificationsQuery = query(
-          notificationsRef, 
-          where('user_id', '==', selectedStudent.id)
-        );
-        const studentNotificationsSnapshot = await getDocs(studentNotificationsQuery);
-        
-        console.log('🔔 DEBUG: Student notifications found:', studentNotificationsSnapshot.docs.length);
-        studentNotificationsSnapshot.docs.forEach(notificationDoc => {
-          const notificationData = notificationDoc.data();
-          const isRead = notificationData.read === true;
-          
-          console.log(`🔔 DEBUG: Student notification ${notificationDoc.id}:`, {
-            title: notificationData.title,
-            read: notificationData.read,
-            isRead: isRead,
-            type: typeof notificationData.read
           });
           
-          // Sprawdź czy powiadomienie już nie istnieje
+          // 2. Pobierz powiadomienia z kolekcji notifications dla ucznia (rodzic widzi powiadomienia dziecka)
+          studentNotificationsSnapshot.docs.forEach(notificationDoc => {
+            const notificationData = notificationDoc.data();
+            const isRead = notificationData.read === true;
+            
+            // Sprawdź czy powiadomienie już nie istnieje
           if (!allNotifications.find(n => n.id === notificationDoc.id)) {
             // Poprawne parsowanie timestamp
             let timestamp = new Date().toISOString();
@@ -311,32 +338,33 @@ export default function ParentLayout({
               event_time: notificationData.event_time
             });
           }
-        });
+          });
 
-        // 3. Sprawdź nowe odpowiedzi w wiadomościach (gdy nauczyciel odpowiedział)
-        const messagesRef = collection(db, 'messages');
-        // Pobierz wszystkie wiadomości dla rodzica (nie tylko nieprzeczytane)
-        const receivedMessagesQuery = query(
-          messagesRef,
-          where('to', '==', user.uid)
-        );
-        const receivedMessagesSnapshot = await getDocs(receivedMessagesQuery);
-        
-        // Pobierz informacje o nauczycielach którzy odpowiedzieli
-        const teacherIds = [...new Set(receivedMessagesSnapshot.docs.map(doc => doc.data().from))];
-        const teacherInfoMap = new Map<string, string>();
-        
-        for (const teacherId of teacherIds) {
-          try {
-            const teacherDoc = await getDoc(doc(db, 'users', teacherId));
-            if (teacherDoc.exists()) {
-              const teacherData = teacherDoc.data();
-              teacherInfoMap.set(teacherId, teacherData.displayName || teacherData.email || 'Nauczyciel');
-            }
-          } catch (error) {
-            console.error(`Error fetching teacher ${teacherId}:`, error);
-          }
-        }
+          // 3. Sprawdź nowe odpowiedzi w wiadomościach (gdy nauczyciel odpowiedział) - z limitem
+          const messagesRef = collection(db, 'messages');
+          const receivedMessagesSnapshot = await getDocs(query(
+            messagesRef,
+            where('to', '==', user.uid),
+            limit(100)
+          ));
+          
+          // Pobierz informacje o nauczycielach którzy odpowiedzieli - równolegle (N+1 fix)
+          const teacherIds = [...new Set(receivedMessagesSnapshot.docs.map(doc => doc.data().from))];
+          const teacherQueries = Array.from(teacherIds).slice(0, 50).map(teacherId =>
+            getDoc(doc(db, 'users', teacherId)).then(teacherDoc => {
+              if (teacherDoc.exists()) {
+                const teacherData = teacherDoc.data();
+                return { id: teacherId, name: teacherData.displayName || teacherData.email || 'Nauczyciel' };
+              }
+              return { id: teacherId, name: 'Nauczyciel' };
+            }).catch(() => ({ id: teacherId, name: 'Nauczyciel' }))
+          );
+          
+          const teachers = await Promise.all(teacherQueries);
+          const teacherInfoMap = new Map<string, string>();
+          teachers.forEach(teacher => {
+            teacherInfoMap.set(teacher.id, teacher.name);
+          });
         
         // Utwórz powiadomienia o odpowiedziach - sprawdź stan przeczytania z wiadomości
         receivedMessagesSnapshot.docs.forEach(messageDoc => {
@@ -377,63 +405,57 @@ export default function ParentLayout({
           }
         });
 
-        // 4. Pobierz ostatnie oceny jako powiadomienia
-        const gradesRef = collection(db, 'grades');
-        let gradesQuery = query(gradesRef, where('studentId', '==', selectedStudent.id), limit(20));
-        let gradesSnapshot = await getDocs(gradesQuery);
-        
-        // Spróbuj alternatywne nazwy pól jeśli nie znaleziono
-        if (gradesSnapshot.empty) {
-          gradesQuery = query(gradesRef, where('user_id', '==', selectedStudent.id), limit(20));
-          gradesSnapshot = await getDocs(gradesQuery);
-        }
-        if (gradesSnapshot.empty) {
-          gradesQuery = query(gradesRef, where('student', '==', selectedStudent.id), limit(20));
-          gradesSnapshot = await getDocs(gradesQuery);
-        }
-
-        // Sprawdź które oceny są już oznaczone jako przeczytane
-        const readGradesRef = doc(db, 'notification_read_status', user.uid);
-        const readGradesDoc = await getDoc(readGradesRef);
-        const readGrades = readGradesDoc.exists() ? (readGradesDoc.data().readGrades || []) : [];
-        console.log('🔔 DEBUG: Read grades from notification_read_status:', readGrades.length, readGrades);
-        
-        // Zbierz unikalne course_id
-        const courseIds = new Set<string>();
-        gradesSnapshot.docs.forEach(gradeDoc => {
-          const gradeData = gradeDoc.data();
-          if (gradeData.course_id) courseIds.add(gradeData.course_id);
-        });
-        
-        // Pobierz wszystkie kursy jednocześnie
-        const courseQueries = Array.from(courseIds).slice(0, 20).map(courseId => 
-          getDoc(doc(db, 'courses', courseId))
-        );
-        const courseDocs = await Promise.all(courseQueries);
-        const coursesMap = new Map<string, string>();
-        courseDocs.forEach(doc => {
-          if (doc.exists()) {
-            coursesMap.set(doc.id, doc.data().title || 'Nieznany kurs');
-          }
-        });
-        
-        // Przetwórz oceny - sprawdź czy są już przeczytane
-        console.log('🔔 DEBUG: Grades found:', gradesSnapshot.docs.length);
-        gradesSnapshot.docs.forEach(gradeDoc => {
-          const gradeData = gradeDoc.data();
-          const courseTitle = gradeData.course_id ? (coursesMap.get(gradeData.course_id) || 'Nieznany kurs') : 'Nieznany kurs';
-          const gradeValue = gradeData.value || gradeData.grade || 0;
-          const gradeDate = gradeData.date || gradeData.graded_at;
-          const isRead = readGrades.includes(gradeDoc.id);
+          // 4. Pobierz ostatnie oceny jako powiadomienia - wszystkie warianty równolegle
+          const gradesRef = collection(db, 'grades');
+          const [gradesByStudentId, gradesByUserId, gradesByStudent, readGradesDoc] = await Promise.all([
+            getDocs(query(gradesRef, where('studentId', '==', selectedStudent.id), limit(20))),
+            getDocs(query(gradesRef, where('user_id', '==', selectedStudent.id), limit(20))),
+            getDocs(query(gradesRef, where('student', '==', selectedStudent.id), limit(20))),
+            getDoc(doc(db, 'notification_read_status', user.uid))
+          ]);
           
-          console.log(`🔔 DEBUG: Grade ${gradeDoc.id}:`, {
-            value: gradeValue,
-            course: courseTitle,
-            isRead: isRead,
-            inReadGrades: readGrades.includes(gradeDoc.id)
+          // Połącz wszystkie wyniki
+          const allGradeDocs = [
+            ...gradesByStudentId.docs,
+            ...gradesByUserId.docs,
+            ...gradesByStudent.docs
+          ];
+          
+          // Usuń duplikaty
+          const uniqueGradeDocs = allGradeDocs.filter((doc, index, self) =>
+            index === self.findIndex(d => d.id === doc.id)
+          );
+          
+          const readGrades = readGradesDoc.exists() ? (readGradesDoc.data().readGrades || []) : [];
+          
+          // Zbierz unikalne course_id
+          const courseIds = new Set<string>();
+          uniqueGradeDocs.forEach(gradeDoc => {
+            const gradeData = gradeDoc.data();
+            if (gradeData.course_id) courseIds.add(gradeData.course_id);
           });
           
-          // Sprawdź czy powiadomienie o tej ocenie już nie istnieje
+          // Pobierz wszystkie kursy jednocześnie
+          const courseQueries = Array.from(courseIds).slice(0, 20).map(courseId => 
+            getDoc(doc(db, 'courses', courseId))
+          );
+          const courseDocs = await Promise.all(courseQueries);
+          const coursesMap = new Map<string, string>();
+          courseDocs.forEach(doc => {
+            if (doc.exists()) {
+              coursesMap.set(doc.id, doc.data().title || 'Nieznany kurs');
+            }
+          });
+          
+          // Przetwórz oceny - sprawdź czy są już przeczytane
+          uniqueGradeDocs.forEach(gradeDoc => {
+          const gradeData = gradeDoc.data();
+          const courseTitle = gradeData.course_id ? (coursesMap.get(gradeData.course_id) || 'Nieznany kurs') : 'Nieznany kurs';
+            const gradeValue = gradeData.value || gradeData.grade || 0;
+            const gradeDate = gradeData.date || gradeData.graded_at;
+            const isRead = readGrades.includes(gradeDoc.id);
+            
+            // Sprawdź czy powiadomienie o tej ocenie już nie istnieje
           if (!allNotifications.find(n => n.id === `grade_${gradeDoc.id}`)) {
             allNotifications.push({
               id: `grade_${gradeDoc.id}`,
@@ -463,28 +485,24 @@ export default function ParentLayout({
           return acc;
         }, [] as Notification[]);
 
-        // Sortuj i ogranicz do 20 najnowszych
-        const sortedNotifications = uniqueNotifications
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-          .slice(0, 20);
+          // Sortuj i ogranicz do 20 najnowszych
+          const sortedNotifications = uniqueNotifications
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 20);
 
-        console.log('🔔 DEBUG: ========== NOTIFICATION SUMMARY ==========');
-        console.log('🔔 DEBUG: Total notifications:', sortedNotifications.length);
-        console.log('🔔 DEBUG: Unread notifications:', sortedNotifications.filter(n => !n.read).length);
-        console.log('🔔 DEBUG: Read notifications:', sortedNotifications.filter(n => n.read).length);
-        console.log('🔔 DEBUG: Unread details:', sortedNotifications.filter(n => !n.read).map(n => ({
-          id: n.id,
-          title: n.title,
-          type: n.type,
-          read: n.read
-        })));
-        console.log('🔔 DEBUG: ===========================================');
-
-        setNotifications(sortedNotifications);
-        const unreadCount = sortedNotifications.filter(n => !n.read).length;
-        setUnreadCount(unreadCount);
-        console.log('🔔 DEBUG: Setting unread count to:', unreadCount);
-
+          setNotifications(sortedNotifications);
+          const unreadCount = sortedNotifications.filter(n => !n.read).length;
+          setUnreadCount(unreadCount);
+          
+          // Cache notifications
+          if (typeof window !== 'undefined') {
+            try {
+              sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: sortedNotifications }));
+            } catch {
+              // Ignore cache errors
+            }
+          }
+        });
       } catch (error) {
         console.error('Error fetching notifications:', error);
         setNotifications([]);
@@ -492,14 +510,16 @@ export default function ParentLayout({
       }
     }, [user, selectedStudent]);
 
-  // Uruchom fetchNotifications przy załadowaniu i odświeżaj co 30 sekund
+  // Uruchom fetchNotifications przy załadowaniu i odświeżaj co 60 sekund (zamiast 30)
   useEffect(() => {
+    if (!user || !selectedStudent) return;
+    
     fetchNotifications();
     
-    // Odświeżaj powiadomienia co 30 sekund
-    const interval = setInterval(fetchNotifications, 30000);
+    // Odświeżaj powiadomienia co 60 sekund (zmniejszone z 30s)
+    const interval = setInterval(fetchNotifications, 60000);
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [fetchNotifications, user, selectedStudent]);
 
   // Zamknij powiadomienia po kliknięciu poza nimi
   useEffect(() => {
@@ -515,16 +535,13 @@ export default function ParentLayout({
     };
   }, []);
 
-  const markNotificationAsRead = async (notificationId: string) => {
+  const markNotificationAsRead = useCallback(async (notificationId: string) => {
     if (!user) return;
     
     const notification = notifications.find(n => n.id === notificationId);
     if (!notification || notification.read) {
-      console.log('⚠️ Notification already read or not found:', notificationId);
       return;
     }
-
-    console.log('✅ Marking notification as read:', notificationId, notification.type);
 
     try {
       const { doc, updateDoc, setDoc, getDoc } = await import('firebase/firestore');
@@ -542,7 +559,6 @@ export default function ParentLayout({
             readGrades: [...currentReadGrades, notification.gradeId],
             lastUpdated: new Date().toISOString()
           }, { merge: true });
-          console.log('✅ Grade notification marked as read in notification_read_status');
         }
       } else if (notificationId.startsWith('message_')) {
         // To powiadomienie o wiadomości - zaktualizuj wiadomość
@@ -552,7 +568,6 @@ export default function ParentLayout({
           read: true,
           readAt: new Date().toISOString()
         });
-        console.log('✅ Message notification marked as read');
       } else {
         // To powiadomienie z kolekcji notifications - zaktualizuj bezpośrednio
         try {
@@ -563,13 +578,16 @@ export default function ParentLayout({
               read: true,
               readAt: new Date().toISOString()
             });
-            console.log('✅ Notification marked as read in Firestore:', notificationId);
-          } else {
-            console.log('⚠️ Notification document not found:', notificationId);
           }
-        } catch (error) {
-          console.error('❌ Error updating notification:', error);
+        } catch {
+          // Ignore errors
         }
+      }
+
+      // Invalidate cache
+      if (typeof window !== 'undefined' && selectedStudent) {
+        const cacheKey = `parent_notifications_${user.uid}_${selectedStudent.id}`;
+        sessionStorage.removeItem(cacheKey);
       }
 
       // Aktualizuj stan lokalny
@@ -581,8 +599,7 @@ export default function ParentLayout({
         )
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
+    } catch {
       // Aktualizuj stan lokalny nawet jeśli zapis się nie powiódł
       setNotifications(prev => 
         prev.map(n => 
@@ -593,23 +610,23 @@ export default function ParentLayout({
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
     }
-  };
+  }, [user, notifications, selectedStudent]);
 
-  const markAllAsRead = async () => {
+  const markAllAsRead = useCallback(async () => {
     if (!user) return;
     
-    console.log('✅ Marking all notifications as read...');
-    
     try {
-      const { doc, updateDoc, setDoc, collection, getDocs, query, where } = await import('firebase/firestore');
+      const { doc, updateDoc, setDoc, collection, getDocs, query, where, limit } = await import('firebase/firestore');
       const { db } = await import('@/config/firebase');
 
       const updatePromises: Promise<any>[] = [];
 
-      // 1. Oznacz wszystkie powiadomienia z kolekcji notifications dla rodzica
+      // 1. Oznacz wszystkie powiadomienia z kolekcji notifications dla rodzica - z limitem
       const notificationsRef = collection(db, 'notifications');
-      const parentNotificationsQuery = query(notificationsRef, where('user_id', '==', user.uid));
-      const parentNotificationsSnapshot = await getDocs(parentNotificationsQuery);
+      const [parentNotificationsSnapshot, studentNotificationsSnapshot] = selectedStudent ? await Promise.all([
+        getDocs(query(notificationsRef, where('user_id', '==', user.uid), limit(100))),
+        getDocs(query(notificationsRef, where('user_id', '==', selectedStudent.id), limit(100)))
+      ]) : [await getDocs(query(notificationsRef, where('user_id', '==', user.uid), limit(100))), null];
       
       parentNotificationsSnapshot.docs.forEach(notificationDoc => {
         const data = notificationDoc.data();
@@ -624,10 +641,7 @@ export default function ParentLayout({
       });
 
       // 2. Oznacz wszystkie powiadomienia z kolekcji notifications dla ucznia
-      if (selectedStudent) {
-        const studentNotificationsQuery = query(notificationsRef, where('user_id', '==', selectedStudent.id));
-        const studentNotificationsSnapshot = await getDocs(studentNotificationsQuery);
-        
+      if (selectedStudent && studentNotificationsSnapshot) {
         studentNotificationsSnapshot.docs.forEach(notificationDoc => {
           const data = notificationDoc.data();
           if (data.read !== true) {
@@ -641,14 +655,14 @@ export default function ParentLayout({
         });
       }
 
-      // 3. Oznacz wszystkie wiadomości jako przeczytane
+      // 3. Oznacz wszystkie wiadomości jako przeczytane - z limitem
       const messagesRef = collection(db, 'messages');
-      const receivedMessagesQuery = query(
+      const receivedMessagesSnapshot = await getDocs(query(
         messagesRef,
         where('to', '==', user.uid),
-        where('read', '==', false)
-      );
-      const receivedMessagesSnapshot = await getDocs(receivedMessagesQuery);
+        where('read', '==', false),
+        limit(100)
+      ));
       
       receivedMessagesSnapshot.docs.forEach(messageDoc => {
         updatePromises.push(
@@ -676,48 +690,30 @@ export default function ParentLayout({
       }
 
       // Wykonaj wszystkie aktualizacje równolegle z obsługą błędów
-      console.log('🔔 DEBUG: markAllAsRead - updating', updatePromises.length, 'documents');
-      const results = await Promise.allSettled(updatePromises);
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      
-      if (failed > 0) {
-        console.error('❌ markAllAsRead - some updates failed:', failed);
-        results.forEach((result, index) => {
-          if (result.status === 'rejected') {
-            console.error(`❌ Failed update ${index}:`, result.reason);
-          }
-        });
+      await Promise.allSettled(updatePromises);
+
+      // Invalidate cache
+      if (typeof window !== 'undefined' && selectedStudent) {
+        const cacheKey = `parent_notifications_${user.uid}_${selectedStudent.id}`;
+        sessionStorage.removeItem(cacheKey);
       }
-      
-      console.log('✅ All notifications marked as read in Firestore:', successful, 'successful,', failed, 'failed');
 
       // Aktualizuj stan lokalny
-      setNotifications(prev => {
-        const updated = prev.map(n => ({ ...n, read: true }));
-        console.log('🔔 DEBUG: markAllAsRead - local state updated, all notifications marked as read');
-        return updated;
-      });
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
       setUnreadCount(0);
-      
-      console.log('✅ Local state updated - unread count set to 0');
       
       // Odśwież powiadomienia po 500ms, aby upewnić się, że są poprawnie odczytane z Firestore
       setTimeout(() => {
-        console.log('🔔 DEBUG: Refreshing notifications after markAllAsRead...');
         fetchNotifications();
       }, 500);
-    } catch (error) {
-      console.error('❌ Error marking all notifications as read:', error);
+    } catch {
       // Aktualizuj stan lokalny nawet jeśli zapis się nie powiódł
-      setNotifications(prev => 
-        prev.map(n => ({ ...n, read: true }))
-      );
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
       setUnreadCount(0);
     }
-  };
+  }, [user, notifications, selectedStudent, fetchNotifications]);
 
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = useCallback((type: string) => {
     switch (type) {
       case 'grade':
         return <CheckCircle className="w-4 h-4 text-green-600" />;
@@ -732,9 +728,9 @@ export default function ParentLayout({
       default:
         return <Bell className="w-4 h-4 text-gray-600" />;
     }
-  };
+  }, []);
 
-  const formatTimestamp = (timestamp: string) => {
+  const formatTimestamp = useCallback((timestamp: string) => {
     try {
       const date = new Date(timestamp);
       const now = new Date();
@@ -759,13 +755,12 @@ export default function ParentLayout({
           minute: '2-digit'
         }).replace(/\./g, '/');
       }
-    } catch (error) {
-      console.error('Error formatting timestamp:', error, timestamp);
+    } catch {
       return 'Nieznana data';
     }
-  };
+  }, []);
 
-  const navigationItems = [
+  const navigationItems = useMemo(() => [
     { 
       id: 'plan', 
       label: 'Plan Zajęć', 
@@ -801,17 +796,17 @@ export default function ParentLayout({
       href: '/homelogin/parent/messages',
       active: pathname === '/homelogin/parent/messages'
     },
-  ];
+  ], [pathname]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     router.push('/login');
-  };
+  }, [logout, router]);
 
-  const handleNavigation = (href: string) => {
+  const handleNavigation = useCallback((href: string) => {
     router.push(href);
     setSidebarOpen(false); // Zamknij sidebar na mobile po nawigacji
-  };
+  }, [router]);
 
   return (
     <ParentRoute>

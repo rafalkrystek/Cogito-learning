@@ -795,21 +795,30 @@ function SuperAdminDashboardContent() {
       const userDoc = querySnapshot.docs[0];
       const userData = userDoc.data();
       
+      // Użyj ID dokumentu jako UID (w Firestore ID dokumentu to UID użytkownika)
+      const userUid = userDoc.id || userData.uid;
+      
+      if (!userUid) {
+        setError('Nie można znaleźć UID użytkownika');
+        setTimeout(() => setError(''), 3000);
+        return;
+      }
+      
       // Aktualizuj rolę w Firestore
-      await updateDoc(doc(db, 'users', userDoc.id), {
+      await updateDoc(doc(db, 'users', userUid), {
         role: 'teacher',
         approved: true
       });
       
       // Ustaw custom claims w Firebase Auth (ważne dla uprawnień)
       try {
-        console.log('Setting custom claims for user:', userData.uid);
+        console.log('Setting custom claims for user:', userUid);
         const response = await fetch('/api/set-teacher-role-api', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ uid: userData.uid })
+          body: JSON.stringify({ uid: userUid })
         });
         
         if (response.ok) {
