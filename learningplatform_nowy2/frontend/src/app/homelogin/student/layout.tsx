@@ -1,7 +1,7 @@
 'use client';
 
 import Link from "next/link";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import StudentRoute from '@/components/StudentRoute';
 import ParentAccess from '@/components/ParentAccess';
 import { useAuth } from '@/context/AuthContext';
@@ -10,6 +10,35 @@ import { collection, getDocs, query, where, deleteDoc, doc } from 'firebase/fire
 import { db } from '@/config/firebase';
 import ThemeToggle from '@/components/ThemeToggle';
 import CogitoLogo from '@/components/CogitoLogo';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Notification {
   id: string;
@@ -31,37 +60,28 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   const notificationRef = useRef<HTMLDivElement>(null);
 
   // Pobierz powiadomienia dla ucznia
-  useEffect(() => {
-    console.log('🔔 Notification useEffect triggered, user:', user?.uid, 'role:', user?.role);
+  const fetchNotifications = useCallback(async () => {
+    if (!user || user.role !== 'student') return;
     
-    const fetchNotifications = async () => {
-      if (!user) {
-        console.log('❌ Not fetching notifications - user is null/undefined');
-        return;
-      }
-      
-      if (user.role !== 'student') {
-        console.log('❌ Not fetching notifications - user role is:', user.role, 'expected: student');
-        return;
-      }
+    const cacheKey = `student_notifications_${user.uid}`;
+    const cached = getSessionCache<Notification[]>(cacheKey);
+    
+    if (cached) {
+      setNotifications(cached);
+      setUnreadCount(cached.filter(n => !n.read).length);
+      return;
+    }
 
-      console.log('✅ Fetching notifications for student:', user.uid, user.email);
-
-      try {
+    try {
+      const allNotifications = await measureAsync('StudentLayout:fetchNotifications', async () => {
         const allNotifications: Notification[] = [];
-        const eventIdsFromNotifications = new Set<string>(); // Śledzenie event_id
+        const eventIdsFromNotifications = new Set<string>();
         const now = new Date();
 
-        // 1. Pobierz powiadomienia z kolekcji notifications
-        const notificationsRef = collection(db, 'notifications');
-        const notificationsQuery = query(
-          notificationsRef, 
-          where('user_id', '==', user.uid)
+        // 1. Pobierz powiadomienia z kolekcji notifications (używa where!)
+        const notificationsSnapshot = await getDocs(
+          query(collection(db, 'notifications'), where('user_id', '==', user.uid))
         );
-        console.log('📥 Querying notifications for user_id:', user.uid);
-        const notificationsSnapshot = await getDocs(notificationsQuery);
-        
-        console.log('📬 Found notifications in DB:', notificationsSnapshot.size);
         
         // Przetwórz powiadomienia równolegle
         const notificationPromises = notificationsSnapshot.docs.map(async (notificationDoc) => {
@@ -85,7 +105,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             eventIdsFromNotifications.add(notificationData.event_id);
           }
           
-          const notification: Notification = {
+          return {
             id: notificationDoc.id,
             type: (notificationData.type || 'message') as 'grade' | 'event' | 'message',
             title: notificationData.title || 'Powiadomienie',
@@ -94,86 +114,81 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             read: notificationData.read || false,
             courseTitle: notificationData.course_title,
             action_url: notificationData.action_url
-          };
-          return notification;
+          } as Notification;
         });
         
         const processedNotifications = await Promise.all(notificationPromises);
         const validNotifications = processedNotifications.filter((notif): notif is Notification => notif !== null);
         allNotifications.push(...validNotifications);
-        
-        console.log('✅ Added', allNotifications.length, 'notifications from notifications collection');
-        console.log('🔖 Event IDs from notifications:', Array.from(eventIdsFromNotifications));
 
-        // 2. Pobierz eventy jako powiadomienia
-        const eventsRef = collection(db, 'events');
-        console.log('📅 Fetching events from DB...');
-        const eventsSnapshot = await getDocs(eventsRef);
+        // 2. OPTYMALIZACJA: Pobierz tylko eventy przypisane do ucznia używając where!
+        // Zamiast pobierać wszystkie eventy i filtrować w pamięci
+        const eventsSnapshot = await getDocs(
+          query(collection(db, 'events'), where('assignedTo', 'array-contains', user.uid))
+        );
         
-        console.log('📅 Found events in DB:', eventsSnapshot.size);
+        // Również sprawdź eventy gdzie uczeń jest w students
+        const eventsByStudentsSnapshot = await getDocs(
+          query(collection(db, 'events'), where('students', 'array-contains', user.uid))
+        );
+        
+        // Połącz oba snapshots i usuń duplikaty
+        const allEventDocs = new Map();
+        [...eventsSnapshot.docs, ...eventsByStudentsSnapshot.docs].forEach(doc => {
+          if (!eventIdsFromNotifications.has(doc.id)) {
+            allEventDocs.set(doc.id, doc);
+          }
+        });
         
         // Przetwórz eventy równolegle
-        const eventPromises = eventsSnapshot.docs
-          .filter(eventDoc => !eventIdsFromNotifications.has(eventDoc.id))
-          .map(async (eventDoc) => {
-            const eventData = eventDoc.data();
-            const isAssignedTo = eventData.assignedTo && eventData.assignedTo.includes(user.uid);
-            const isInStudents = eventData.students && eventData.students.includes(user.uid);
-            
-            if (!isAssignedTo && !isInStudents) return null;
-            
-            const eventDateString = eventData.date || eventData.deadline;
-            
-            if (!eventDateString) return null;
-            
-            const eventDate = new Date(eventDateString);
-            if (isNaN(eventDate.getTime())) return null;
-            
-            const sevenDaysAfterEvent = new Date(eventDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-            if (sevenDaysAfterEvent < now) return null;
-            
-            const eventNotification: Notification = {
-              id: `event-${eventDoc.id}`,
-              type: 'event' as const,
-              title: eventData.title || 'Nowe zadanie',
-              message: eventData.description || 'Masz nowe zadanie do wykonania',
-              timestamp: eventDateString,
-              read: false,
-              action_url: '/homelogin/student/calendar'
-            };
-            return eventNotification;
-          });
+        const eventPromises = Array.from(allEventDocs.values()).map(async (eventDoc) => {
+          const eventData = eventDoc.data();
+          const eventDateString = eventData.date || eventData.deadline;
           
-          const processedEvents = await Promise.all(eventPromises);
-          const validEvents = processedEvents.filter((event): event is Notification => event !== null);
-          allNotifications.push(...validEvents);
-        
-        console.log('📅 Added', allNotifications.length - eventIdsFromNotifications.size, 'events after deduplication and filtering');
+          if (!eventDateString) return null;
+          
+          const eventDate = new Date(eventDateString);
+          if (isNaN(eventDate.getTime())) return null;
+          
+          const sevenDaysAfterEvent = new Date(eventDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+          if (sevenDaysAfterEvent < now) return null;
+          
+          return {
+            id: `event-${eventDoc.id}`,
+            type: 'event' as const,
+            title: eventData.title || 'Nowe zadanie',
+            message: eventData.description || 'Masz nowe zadanie do wykonania',
+            timestamp: eventDateString,
+            read: false,
+            action_url: '/homelogin/student/calendar'
+          } as Notification;
+        });
+          
+        const processedEvents = await Promise.all(eventPromises);
+        const validEvents = processedEvents.filter((event): event is Notification => event !== null);
+        allNotifications.push(...validEvents);
 
         // Sortuj po dacie malejąco i ogranicz do 15 najnowszych
-        const sortedNotifications = allNotifications
+        return allNotifications
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           .slice(0, 15);
+      });
+      
+      setNotifications(allNotifications);
+      setUnreadCount(allNotifications.filter(n => !n.read).length);
+      setSessionCache(cacheKey, allNotifications);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+    }
+  }, [user]);
 
-        console.log('📊 FINAL STATS:');
-        console.log('  - Total notifications found:', allNotifications.length);
-        console.log('  - After sorting/limiting:', sortedNotifications.length);
-        console.log('  - Unread count:', sortedNotifications.filter(n => !n.read).length);
-        console.log('📋 All notifications:', sortedNotifications);
-        
-        setNotifications(sortedNotifications);
-        setUnreadCount(sortedNotifications.filter(n => !n.read).length);
-      } catch (error) {
-        console.error('Error fetching notifications:', error);
-      }
-    };
-
+  useEffect(() => {
     fetchNotifications();
     
     // Odświeżaj powiadomienia co 5 minut
     const interval = setInterval(fetchNotifications, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [fetchNotifications]);
 
   // Obsługa kliknięć poza powiadomieniami
   useEffect(() => {
@@ -191,10 +206,10 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     }
   }, [showNotifications]);
 
-  const markAllAsRead = () => {
+  const markAllAsRead = useCallback(() => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     setUnreadCount(0);
-  };
+  }, []);
 
   return (
     <StudentRoute>

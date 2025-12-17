@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '@/config/firebase';
 import { useAuth } from '@/context/AuthContext';
@@ -7,6 +7,35 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Providers from '@/components/Providers';
 import Image from 'next/image';
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 function StudentProfileContent() {
   const { user } = useAuth();
@@ -23,25 +52,64 @@ function StudentProfileContent() {
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const fetchUserData = async () => {
-      if (!user) return;
-      setLoading(true);
+  const fetchUserData = useCallback(async () => {
+    if (!user) return;
+    
+    const cacheKey = `student_profile_${user.uid}`;
+    const cached = getSessionCache<{
+      displayName: string;
+      email: string;
+      userClass: string;
+      phone: string;
+      photoURL: string;
+    }>(cacheKey);
+    
+    if (cached) {
+      setDisplayName(cached.displayName);
+      setEmail(cached.email);
+      setUserClass(cached.userClass);
+      setPhone(cached.phone);
+      setPhotoURL(cached.photoURL);
+      setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    const userData = await measureAsync('StudentProfile:fetchUserData', async () => {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
         const data = userDoc.data();
-        setDisplayName(data.displayName || '');
-        setEmail(data.email || '');
-        setUserClass(data.class || '');
-        setPhone(data.phone || '');
-        setPhotoURL(data.photoURL || '');
+        return {
+          displayName: data.displayName || '',
+          email: data.email || '',
+          userClass: data.class || '',
+          phone: data.phone || '',
+          photoURL: data.photoURL || ''
+        };
       }
-      setLoading(false);
-    };
-    fetchUserData();
+      return {
+        displayName: '',
+        email: '',
+        userClass: '',
+        phone: '',
+        photoURL: ''
+      };
+    });
+    
+    setDisplayName(userData.displayName);
+    setEmail(userData.email);
+    setUserClass(userData.userClass);
+    setPhone(userData.phone);
+    setPhotoURL(userData.photoURL);
+    setSessionCache(cacheKey, userData);
+    setLoading(false);
   }, [user]);
 
-  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    fetchUserData();
+  }, [fetchUserData]);
+
+  const handlePhotoChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     if (!file.type.startsWith('image/')) {
@@ -106,9 +174,9 @@ function StudentProfileContent() {
     } finally {
       setUploading(false);
     }
-  };
+  }, [user]);
 
-  const formatPhoneNumber = (value: string): string => {
+  const formatPhoneNumber = useCallback((value: string): string => {
     // Usuń wszystkie znaki niebędące cyframi lub +
     const cleaned = value.replace(/[^\d+]/g, '');
     
@@ -129,16 +197,16 @@ function StudentProfileContent() {
     
     // W przeciwnym razie dodaj +48
     return '+48' + cleaned;
-  };
+  }, []);
 
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhoneChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     // Pozwól na wprowadzanie cyfr, spacji, + i -
     const cleaned = value.replace(/[^\d+\s-]/g, '');
     setPhone(cleaned);
-  };
+  }, []);
 
-  const handleSaveProfile = async () => {
+  const handleSaveProfile = useCallback(async () => {
     if (!user) return;
     
     // Walidacja numeru telefonu (jeśli został wprowadzony)
@@ -192,7 +260,7 @@ function StudentProfileContent() {
       });
       setTimeout(() => setSaveMessage(null), 5000);
     }
-  };
+  }, [user, displayName, userClass, phone, formatPhoneNumber]);
 
   if (loading) {
     return (

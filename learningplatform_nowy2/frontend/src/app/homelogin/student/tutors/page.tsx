@@ -1,10 +1,39 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { ArrowLeft, MessageCircle, Phone, Mail, Clock, Star, User, AlertCircle, Award, Calendar } from 'lucide-react';
 import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { useAuth } from '../../../../context/AuthContext';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Achievement {
   id: string;
@@ -40,147 +69,71 @@ function StudentTutorsPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchTutors = useCallback(async () => {
     if (!user) return;
     
-    const fetchTutors = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        console.log('Pobieranie tutorów dla ucznia:', user.uid);
-        
-        // Pobierz dokument studenta
+    const cacheKey = `student_tutors_${user.uid}`;
+    const cached = getSessionCache<Tutor[]>(cacheKey);
+    
+    if (cached) {
+      setTutors(cached);
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Pobierz dokument studenta
+      const studentData = await measureAsync('StudentTutors:fetchStudent', async () => {
         const studentDocRef = doc(db, 'users', user.uid);
         const studentSnap = await getDoc(studentDocRef);
         
         if (!studentSnap.exists()) {
-          setError('Nie znaleziono dokumentu studenta.');
-          return;
+          throw new Error('Nie znaleziono dokumentu studenta.');
         }
+        
+        return studentSnap.data();
+      });
 
-        const studentData = studentSnap.data();
-        const primaryTutorId = studentData.primaryTutorId;
-        const assignedTutors = studentData.assignedTutors || [];
+      const primaryTutorId = studentData.primaryTutorId;
+      const assignedTutors = studentData.assignedTutors || [];
 
-        if (!primaryTutorId && assignedTutors.length === 0) {
-          setError('Nie przypisano żadnych tutorów. Skontaktuj się z administratorem.');
-          return;
-        }
+      if (!primaryTutorId && assignedTutors.length === 0) {
+        setError('Nie przypisano żadnych tutorów. Skontaktuj się z administratorem.');
+        setLoading(false);
+        return;
+      }
 
-        // Pobierz wszystkich przypisanych tutorów
-        const allTutorIds = [...new Set([primaryTutorId, ...assignedTutors])].filter(Boolean);
+      // OPTYMALIZACJA: Pobierz wszystkich tutorów równolegle zamiast w pętli!
+      const allTutorIds = [...new Set([primaryTutorId, ...assignedTutors])].filter(Boolean);
+      
+      const tutorsData = await measureAsync('StudentTutors:fetchTutors', async () => {
+        // Równoległe pobieranie wszystkich tutorów
+        const tutorPromises = allTutorIds.map(tutorId => 
+          getDoc(doc(db, 'users', tutorId))
+        );
+        
+        const tutorSnapshots = await Promise.all(tutorPromises);
         const tutorsData: Tutor[] = [];
 
-        for (const tutorId of allTutorIds) {
+        for (let i = 0; i < tutorSnapshots.length; i++) {
+          const tutorSnap = tutorSnapshots[i];
+          const tutorId = allTutorIds[i];
+          
           try {
-            const tutorDocRef = doc(db, 'users', tutorId);
-            const tutorSnap = await getDoc(tutorDocRef);
-            
             if (tutorSnap.exists()) {
               const tutorData = tutorSnap.data();
               
-              // Oblicz statystyki z Firebase jeśli nie są w dokumencie
+              // Użyj statystyk z dokumentu (szybsze) - obliczanie statystyk jest bardzo ciężkie
               let activeCourses = tutorData.activeCourses || 0;
               let totalStudents = tutorData.totalStudents || 0;
               let averageRating = tutorData.averageRating || 0;
               
-              // Jeśli statystyki nie są zaktualizowane (starsze niż 1 godzina) lub nie istnieją, oblicz je
-              const statsUpdatedAt = tutorData.statsUpdatedAt;
-              const shouldRecalculate = !statsUpdatedAt || 
-                (new Date().getTime() - new Date(statsUpdatedAt).getTime()) > 3600000; // 1 godzina
-              
-              if (shouldRecalculate && tutorData.email) {
-                try {
-                  // Pobierz kursy nauczyciela
-                  const coursesCollection = collection(db, 'courses');
-                  const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
-                    getDocs(query(coursesCollection, where('created_by', '==', tutorData.email))),
-                    getDocs(query(coursesCollection, where('created_by', '==', tutorId))),
-                    getDocs(query(coursesCollection, where('teacherEmail', '==', tutorData.email)))
-                  ]);
-                  
-                  const coursesMap = new Map();
-                  [coursesByEmail, coursesByUid, coursesByTeacherEmail].forEach(snapshot => {
-                    snapshot.docs.forEach(doc => {
-                      coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
-                    });
-                  });
-                  activeCourses = coursesMap.size;
-                  
-                  // Pobierz uczniów
-                  const allAssignedUsers = new Set<string>();
-                  coursesMap.forEach((course: any) => {
-                    if (course.assignedUsers && Array.isArray(course.assignedUsers)) {
-                      course.assignedUsers.forEach((userId: string) => allAssignedUsers.add(userId));
-                    }
-                  });
-                  
-                  const studentsCollection = collection(db, 'users');
-                  const uniqueStudents = new Set<string>();
-                  
-                  // Dla każdego przypisanego użytkownika sprawdź czy istnieje jako student
-                  for (const userId of allAssignedUsers) {
-                    try {
-                      let studentDoc;
-                      if (userId.includes('@')) {
-                        // Jeśli to email, szukaj po email
-                        const emailQuery = query(studentsCollection, where("email", "==", userId), where("role", "==", "student"));
-                        const emailSnapshot = await getDocs(emailQuery);
-                        if (!emailSnapshot.empty) {
-                          studentDoc = emailSnapshot.docs[0];
-                        }
-                      } else {
-                        // Jeśli to ID, sprawdź bezpośrednio
-                        const userDocRef = doc(db, 'users', userId);
-                        const userDocSnap = await getDoc(userDocRef);
-                        if (userDocSnap.exists() && userDocSnap.data().role === 'student') {
-                          studentDoc = userDocSnap;
-                        }
-                      }
-                      
-                      if (studentDoc) {
-                        uniqueStudents.add(studentDoc.id);
-                      }
-                    } catch (error) {
-                      console.error(`Błąd podczas pobierania ucznia ${userId}:`, error);
-                    }
-                  }
-                  
-                  totalStudents = uniqueStudents.size;
-                  
-                  // Pobierz średnią ocenę z ankiet
-                  const surveysCollection = collection(db, 'teacherSurveys');
-                  const surveysQuery = query(surveysCollection, where('teacherId', '==', tutorId));
-                  const surveysSnapshot = await getDocs(surveysQuery);
-                  
-                  if (!surveysSnapshot.empty) {
-                    let totalScore = 0;
-                    let count = 0;
-                    
-                    surveysSnapshot.docs.forEach(doc => {
-                      const data = doc.data();
-                      if (data.averageScore && typeof data.averageScore === 'number') {
-                        totalScore += data.averageScore;
-                        count++;
-                      } else if (data.responses) {
-                        const scores = Object.values(data.responses).filter((score: any) => typeof score === 'number');
-                        if (scores.length > 0) {
-                          const avg = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
-                          totalScore += avg;
-                          count++;
-                        }
-                      }
-                    });
-                    
-                    if (count > 0) {
-                      averageRating = totalScore / count;
-                    }
-                  }
-                } catch (error) {
-                  console.error(`Błąd podczas obliczania statystyk dla tutora ${tutorId}:`, error);
-                }
-              }
+              // OPTYMALIZACJA: Pomiń obliczanie statystyk - używaj tylko z dokumentu
+              // Jeśli statystyki nie są dostępne, użyj domyślnych wartości
+              // Obliczanie statystyk dla każdego tutora jest bardzo ciężkie i nie jest potrzebne przy każdym ładowaniu
               
               // Mock achievements - można później pobrać z Firestore
               const mockAchievements: Achievement[] = [
@@ -231,27 +184,28 @@ function StudentTutorsPageContent() {
             console.error(`Błąd podczas pobierania tutora ${tutorId}:`, err);
           }
         }
-
+        
         // Sortuj - główny tutor pierwszy
-        const sortedTutors = tutorsData.sort((a, b) => {
+        return tutorsData.sort((a, b) => {
           if (a.isPrimary) return -1;
           if (b.isPrimary) return 1;
           return 0;
         });
-
-        setTutors(sortedTutors);
-        console.log(`Znaleziono ${sortedTutors.length} tutorów`);
-        
-      } catch (err) {
-        console.error('Błąd podczas pobierania tutorów:', err);
-        setError('Nie udało się pobrać informacji o tutorach.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchTutors();
+      });
+      
+      setTutors(tutorsData);
+      setSessionCache(cacheKey, tutorsData);
+    } catch (err) {
+      console.error('Błąd podczas pobierania tutorów:', err);
+      setError('Nie udało się pobrać informacji o tutorach.');
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchTutors();
+  }, [fetchTutors]);
 
   const handleContactTutor = (tutor: Tutor) => {
     // TODO: Implementować system wiadomości

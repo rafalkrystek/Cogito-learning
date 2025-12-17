@@ -571,9 +571,6 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                     }
                                   }
                                   
-                                  console.log(`About to render content block ${block.id} of type ${blockType} (auto-detected from ${block.type})`);
-                                  console.log('Full block object:', JSON.stringify(block, null, 2));
-                                  
                                   // Użyj automatycznie określonego typu
                                   const blockWithType = { ...block, type: blockType };
                                   
@@ -715,13 +712,6 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                                   (block.fileUrl && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)(\?|$)/i.test(block.fileUrl));
                                     
                                     if (isImage) {
-                                      console.log('Rendering image:', {
-                                        fileName: fileName,
-                                        fileUrl: block.fileUrl,
-                                        title: block.title,
-                                        blockId: block.id
-                                      });
-                                      
                                       return (
                                         <div className="mt-3">
                                           {/* Image Container with aspect ratio like VideoPlayer */}
@@ -855,63 +845,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                             </div>
                           ) : section.subsections && section.subsections.length > 0 ? (
                             /* Stary system z podsekcjami */
-                            (() => {
-                              console.log('=== DEBUGGING SUBSECTIONS ===');
-                              console.log('Section ID:', section.id);
-                              console.log('Section name:', section.name);
-                              console.log('Subsections array:', section.subsections);
-                              console.log('Subsections length:', section.subsections.length);
-                              section.subsections.forEach((subsection: any, index: number) => {
-                                console.log(`Subsection ${index}:`, {
-                                  id: subsection.id,
-                                  name: subsection.name,
-                                  contentBlocks: subsection.contentBlocks,
-                                  materials: subsection.materials,
-                                  contentBlocksLength: subsection.contentBlocks?.length || 0,
-                                  materialsLength: subsection.materials?.length || 0
-                                });
-                                
-                                // Debug each content block in subsection
-                                if (subsection.contentBlocks) {
-                                  subsection.contentBlocks.forEach((block: any, blockIndex: number) => {
-                                    console.log(`  Subsection ${index} Block ${blockIndex}:`, {
-                                      id: block.id,
-                                      type: block.type,
-                                      title: block.title,
-                                      videoUrl: block.videoUrl,
-                                      youtubeUrl: block.youtubeUrl,
-                                      fileUrl: block.fileUrl,
-                                      content: block.content?.substring(0, 50),
-                                      link: block.link,
-                                      url: block.url,
-                                      text: block.text,
-                                      ALL_PROPERTIES: Object.keys(block)
-                                    });
-                                  });
-                                }
-                                
-                                // Debug each material in subsection
-                                if (subsection.materials) {
-                                  subsection.materials.forEach((material: any, materialIndex: number) => {
-                                    console.log(`  Subsection ${index} Material ${materialIndex}:`, {
-                                      id: material.id,
-                                      type: material.type,
-                                      title: material.title,
-                                      videoUrl: material.videoUrl,
-                                      youtubeUrl: material.youtubeUrl,
-                                      fileUrl: material.fileUrl,
-                                      content: material.content?.substring(0, 50),
-                                      link: material.link,
-                                      url: material.url,
-                                      text: material.text,
-                                      description: material.description,
-                                      ALL_PROPERTIES: Object.keys(material),
-                                      FULL_OBJECT: material
-                                    });
-                                  });
-                                }
-                              });
-                              return section.subsections.map((subsection: any) => (
+                            section.subsections.map((subsection: any) => (
                               <div
                                 key={subsection.id}
                                 id={`lesson-${subsection.id}`}
@@ -950,48 +884,9 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                   </div>
                                 )}
 
-                                {/* DEBUG: Pokaż wszystkie dane podsekcji - USUŃ PO DEBUGOWANIU */}
-                                {process.env.NODE_ENV === 'development' && (
-                                  <details className="px-4 py-2 bg-yellow-50 border-b border-yellow-200 text-xs">
-                                    <summary className="cursor-pointer text-yellow-700 font-medium">
-                                      🔍 Debug: Dane podsekcji &quot;{subsection.name}&quot;
-                                    </summary>
-                                    <pre className="mt-2 p-2 bg-yellow-100 rounded overflow-auto max-h-60 text-xs">
-                                      {JSON.stringify({
-                                        id: subsection.id,
-                                        name: subsection.name,
-                                        description: subsection.description,
-                                        materials: subsection.materials?.map((m: any) => ({
-                                          id: m.id,
-                                          type: m.type,
-                                          title: m.title,
-                                          content: m.content?.substring(0, 100),
-                                          text: m.text?.substring(0, 100),
-                                          description: m.description?.substring(0, 100),
-                                          hasVideo: !!(m.videoUrl || m.youtubeUrl),
-                                          hasFile: !!m.fileUrl,
-                                        })),
-                                        contentBlocks: subsection.contentBlocks?.map((b: any) => ({
-                                          id: b.id,
-                                          type: b.type,
-                                          title: b.title,
-                                          content: b.content?.substring(0, 100),
-                                          text: b.text?.substring(0, 100),
-                                          description: b.description?.substring(0, 100),
-                                          hasVideo: !!(b.videoUrl || b.youtubeUrl),
-                                          hasFile: !!b.fileUrl,
-                                        })),
-                                        allKeys: Object.keys(subsection),
-                                      }, null, 2)}
-                                    </pre>
-                                  </details>
-                                )}
 
                                 {/* Lesson Materials */}
-                                {(() => {
-                                  console.log(`Checking showSubsection for ${subsection.id}:`, showSubsection[subsection.id]);
-                                  return showSubsection[subsection.id];
-                                })() && (
+                                {showSubsection[subsection.id] && (
                                   <div className="p-4 space-y-3 bg-white">
                                     {(() => {
                                       // Preferuj contentBlocks (nowy system), jeśli nie ma to użyj materials (stary system)
@@ -999,13 +894,6 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                       const blocks = (subsection.contentBlocks && subsection.contentBlocks.length > 0) 
                                         ? subsection.contentBlocks 
                                         : (subsection.materials || []);
-                                      
-                                      console.log(`Rendering materials for subsection ${subsection.id}:`, {
-                                        materials: subsection.materials,
-                                        contentBlocks: subsection.contentBlocks,
-                                        blocks: blocks,
-                                        blocksLength: blocks.length
-                                      });
                                       
                                       if (blocks.length === 0) {
                                         return (
@@ -1037,25 +925,6 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                           }
                                         }
                                         
-                                        console.log(`Rendering block:`, block);
-                                        console.log(`Auto-detected type: ${blockType} from ${block.type}`);
-                                        // Debug logging
-                                        console.log('Content Block:', {
-                                          type: blockType,
-                                          originalType: block.type,
-                                          title: block.title,
-                                          videoUrl: block.videoUrl,
-                                          youtubeUrl: block.youtubeUrl,
-                                          fileUrl: block.fileUrl,
-                                          content: block.content?.substring(0, 50),
-                                          description: block.description,
-                                          text: block.text,
-                                          link: block.link,
-                                          url: block.url,
-                                          ALL_PROPERTIES: Object.keys(block)
-                                        });
-
-                                        console.log(`About to render block ${block.id} of type ${block.type}`);
                                         return (
                                         <div
                                           key={block.id}
@@ -1080,18 +949,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                           )}
 
                                           {/* Text content */}
-                                          {(() => {
-                                            const hasTextContent = block.type === 'text' && (block.content || block.text || block.description) && !block.description?.startsWith('http');
-                                            console.log(`Block ${block.id} text content check:`, {
-                                              type: block.type,
-                                              hasContent: !!block.content,
-                                              hasText: !!block.text,
-                                              hasDescription: !!block.description,
-                                              isUrl: block.description?.startsWith('http'),
-                                              hasTextContent
-                                            });
-                                            return hasTextContent;
-                                          })() && (
+                                          {block.type === 'text' && (block.content || block.text || block.description) && !block.description?.startsWith('http') && (
                                             <div 
                                               className="prose prose-sm max-w-none text-gray-700
                                                 [&>ul]:list-disc [&>ul]:ml-4 [&>ol]:list-decimal [&>ol]:ml-4"
@@ -1100,18 +958,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                           )}
 
                                           {/* Text content with only title (fallback) */}
-                                          {(() => {
-                                            const shouldShowFallback = block.type === 'text' && !(block.content || block.text || block.description) && block.title;
-                                            console.log(`Block ${block.id} fallback check:`, {
-                                              type: block.type,
-                                              hasContent: !!block.content,
-                                              hasText: !!block.text,
-                                              hasDescription: !!block.description,
-                                              hasTitle: !!block.title,
-                                              shouldShowFallback
-                                            });
-                                            return shouldShowFallback;
-                                          })() && (
+                                          {block.type === 'text' && !(block.content || block.text || block.description) && block.title && (
                                             <div className="prose prose-sm max-w-none text-gray-700">
                                               <h3 className="font-semibold text-gray-900 mb-2">{block.title}</h3>
                                               <p className="text-gray-500 italic">Brak treści dla tego materiału</p>
@@ -1262,18 +1109,6 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                                           (block.fileUrl && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)(\?|$)/i.test(block.fileUrl));
                                             
                                             if (isImage) {
-                                              console.log('Rendering image (old system):', {
-                                                fileName: fileName,
-                                                fileUrl: block.fileUrl,
-                                                title: block.title,
-                                                blockId: block.id,
-                                                isFirebaseUrl: block.fileUrl?.includes('firebasestorage.googleapis.com'),
-                                                isBlobUrl: block.fileUrl?.startsWith('blob:'),
-                                                isUuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(block.fileUrl || ''),
-                                                fileUrlType: typeof block.fileUrl,
-                                                fileUrlLength: block.fileUrl?.length
-                                              });
-                                              
                                               // Sprawdź czy to blob URL (tymczasowy)
                                               if (block.fileUrl?.startsWith('blob:')) {
                                                 return (
@@ -1313,7 +1148,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                                           });
                                                         }}
                                                         onLoad={() => {
-                                                          console.log('Image loaded successfully (old system):', block.fileUrl);
+                                                          // Image loaded successfully
                                                         }}
                                                       />
                                                     </div>
@@ -1427,8 +1262,8 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                   </div>
                                 )}
                               </div>
-                            ));
-                            })()) : (
+                            ))
+                          ) : (
                             /* Brak materiałów i podsekcji */
                             <div className="text-gray-400 italic text-sm py-4 text-center">
                               Brak materiałów w tym rozdziale

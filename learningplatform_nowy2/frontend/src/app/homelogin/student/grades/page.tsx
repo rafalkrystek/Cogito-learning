@@ -1,10 +1,39 @@
 'use client';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { collection, getDocs, query, where, doc, getDoc, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuth } from '@/context/AuthContext';
 import Providers from '@/components/Providers';
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Grade {
   id: string;
@@ -26,8 +55,6 @@ interface GroupedGrades {
 }
 
 function GradesPageContent() {
-  console.log('🚀 GradesPageContent function called!');
-  
   const { user, loading: authLoading } = useAuth();
   const [grades, setGrades] = useState<Grade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,109 +62,137 @@ function GradesPageContent() {
   const [toast, setToast] = useState<{grade: number, description: string, date: string, gradeType?: string, quizTitle?: string, percentage?: number} | null>(null);
   const [userCourses, setUserCourses] = useState<any[]>([]);
 
-  console.log('🔄 GradesPageContent rendered, user:', user?.uid, 'authLoading:', authLoading);
-  console.log('🔄 User object:', user);
-  console.log('🔄 AuthLoading object:', authLoading);
+  // Memoized cache keys
+  const displayNameCacheKey = useMemo(() => user ? `student_displayName_${user.uid}` : '', [user]);
+  const coursesCacheKey = useMemo(() => user ? `student_courses_${user.uid}` : '', [user]);
+  const gradesCacheKey = useMemo(() => user ? `student_grades_${user.uid}` : '', [user]);
 
   useEffect(() => {
     if (!user) return;
+    
+    // Check cache first
+    const cached = getSessionCache<string>(displayNameCacheKey);
+    if (cached) {
+      setDisplayName(cached);
+      return;
+    }
+
     // Pobierz displayName z Firestore
     const fetchDisplayName = async () => {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
         const data = userDoc.data();
-        setDisplayName(data.displayName || '');
+        const name = data.displayName || '';
+        setDisplayName(name);
+        setSessionCache(displayNameCacheKey, name);
       }
     };
     fetchDisplayName();
-  }, [user]);
+  }, [user, displayNameCacheKey]);
 
   // Pobierz kursy użytkownika
   useEffect(() => {
     const fetchUserCourses = async () => {
       if (!user) return;
       
-      console.log('🔄 Fetching user courses for:', user.uid);
-      const coursesQuery = query(
-        collection(db, 'courses'),
-        where('assignedUsers', 'array-contains', user.uid)
-      );
-      const coursesSnapshot = await getDocs(coursesQuery);
-      const coursesList = coursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log('📚 User courses:', coursesList);
+      // Check cache
+      const cached = getSessionCache<any[]>(coursesCacheKey);
+      if (cached) {
+        setUserCourses(cached);
+        return;
+      }
+      
+      const coursesList = await measureAsync('StudentGrades:fetchCourses', async () => {
+        const coursesQuery = query(
+          collection(db, 'courses'),
+          where('assignedUsers', 'array-contains', user.uid)
+        );
+        const coursesSnapshot = await getDocs(coursesQuery);
+        return coursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      });
+      
       setUserCourses(coursesList);
+      setSessionCache(coursesCacheKey, coursesList);
     };
 
     fetchUserCourses();
-  }, [user]);
+  }, [user, coursesCacheKey]);
 
   const fetchGrades = useCallback(async () => {
     if (!user) return;
+    
+    // Check cache
+    const cached = getSessionCache<Grade[]>(gradesCacheKey);
+    if (cached) {
+      setGrades(cached);
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     
     // Pobierz wszystkie oceny równolegle zamiast sekwencyjnie
-    const gradeQueries: Promise<any>[] = [
-      getDocs(query(collection(db, 'grades'), where('user_id', '==', user.uid), limit(100)))
-    ];
-    if (user.email) {
-      gradeQueries.push(getDocs(query(collection(db, 'grades'), where('studentEmail', '==', user.email), limit(100))));
-    }
-    const results = await Promise.all(gradeQueries);
-    const gradesByUid = results[0];
-    const gradesByEmail = results[1] || { docs: [] };
+    const allGrades = await measureAsync('StudentGrades:fetchGrades', async () => {
+      const gradeQueries: Promise<any>[] = [
+        getDocs(query(collection(db, 'grades'), where('user_id', '==', user.uid), limit(100)))
+      ];
+      if (user.email) {
+        gradeQueries.push(getDocs(query(collection(db, 'grades'), where('studentEmail', '==', user.email), limit(100))));
+      }
+      const results = await Promise.all(gradeQueries);
+      const gradesByUid = results[0];
+      const gradesByEmail = results[1] || { docs: [] };
+      
+      // Połącz obie listy i usuń duplikaty
+      const snapshots = user.email ? [gradesByUid, gradesByEmail] : [gradesByUid];
+      const allGrades = snapshots.flatMap(snapshot => 
+        snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Grade))
+      );
+      return allGrades.filter((grade, index, self) => 
+        index === self.findIndex(g => g.id === grade.id)
+      );
+    });
     
-    // Połącz obie listy i usuń duplikaty
-    const snapshots = user.email ? [gradesByUid, gradesByEmail] : [gradesByUid];
-    const allGrades = snapshots.flatMap(snapshot => 
-      snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Grade))
-    );
-    const uniqueGrades = allGrades.filter((grade, index, self) => 
-      index === self.findIndex(g => g.id === grade.id)
-    );
-    
-    setGrades(uniqueGrades);
+    setGrades(allGrades);
+    setSessionCache(gradesCacheKey, allGrades);
     setLoading(false);
-  }, [user]);
+  }, [user, gradesCacheKey]);
 
   useEffect(() => {
-    console.log('🔄 Grades useEffect triggered, user:', user?.uid, 'authLoading:', authLoading);
-    console.log('🔄 useEffect dependencies changed - user:', user?.uid, 'authLoading:', authLoading);
-    if (authLoading) {
-      console.log('⏳ Auth still loading, waiting...');
-      return;
-    }
-    if (!user) {
-      console.log('❌ No user found');
-      return;
-    }
-    console.log('✅ User found, fetching grades...');
+    if (authLoading) return;
+    if (!user) return;
     fetchGrades();
   }, [user, authLoading, fetchGrades]);
 
-  // Grupowanie ocen po przedmiocie i sortowanie po dacie rosnąco
-  const groupedGrades: GroupedGrades = grades.reduce((acc, grade) => {
-    const subject = grade.subject || 'Inne';
-    if (!acc[subject]) acc[subject] = [];
-    acc[subject].push(grade);
-    return acc;
-  }, {} as GroupedGrades);
+  // Memoized grouped grades
+  const groupedGrades: GroupedGrades = useMemo(() => {
+    const grouped: GroupedGrades = grades.reduce((acc, grade) => {
+      const subject = grade.subject || 'Inne';
+      if (!acc[subject]) acc[subject] = [];
+      acc[subject].push(grade);
+      return acc;
+    }, {} as GroupedGrades);
 
-  // Dodaj kursy bez ocen
-  userCourses.forEach(course => {
-    const courseTitle = course.title || course.name || 'Nieznany kurs';
-    if (!groupedGrades[courseTitle]) {
-      groupedGrades[courseTitle] = [];
-    }
-  });
-  // Sortuj oceny w każdym przedmiocie po dacie rosnąco
-  Object.keys(groupedGrades).forEach(subject => {
-    groupedGrades[subject].sort((a, b) => {
-      // Jeśli data nie istnieje, traktuj jako najstarszą
-      if (!a.graded_at) return -1;
-      if (!b.graded_at) return 1;
-      return new Date(a.graded_at).getTime() - new Date(b.graded_at).getTime();
+    // Dodaj kursy bez ocen
+    userCourses.forEach(course => {
+      const courseTitle = course.title || course.name || 'Nieznany kurs';
+      if (!grouped[courseTitle]) {
+        grouped[courseTitle] = [];
+      }
     });
-  });
+    
+    // Sortuj oceny w każdym przedmiocie po dacie rosnąco
+    Object.keys(grouped).forEach(subject => {
+      grouped[subject].sort((a, b) => {
+        // Jeśli data nie istnieje, traktuj jako najstarszą
+        if (!a.graded_at) return -1;
+        if (!b.graded_at) return 1;
+        return new Date(a.graded_at).getTime() - new Date(b.graded_at).getTime();
+      });
+    });
+    
+    return grouped;
+  }, [grades, userCourses]);
 
   // Funkcja do określania koloru badge na podstawie oceny
   function getGradeColor(grade: number) {

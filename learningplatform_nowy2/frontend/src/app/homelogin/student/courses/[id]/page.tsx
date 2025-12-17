@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
@@ -7,6 +7,35 @@ import { db } from "@/config/firebase";
 import Providers from '@/components/Providers';
 import { CourseViewShared } from "@/components/CourseViewShared";
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 function StudentCourseDetailContent() {
   const { user, loading: authLoading } = useAuth();
@@ -19,353 +48,105 @@ function StudentCourseDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchCourseData = async () => {
-      const functionCallId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      console.log(`🚀 [DEBUG] [${functionCallId}] useEffect triggered`, {
-        courseId: courseId,
-        courseIdType: typeof courseId,
-        userExists: !!user,
-        userEmail: user?.email,
-        authLoading: authLoading
-      });
-      
-      if (!courseId) {
-        console.warn(`⚠️ [DEBUG] [${functionCallId}] No courseId provided`);
-        return;
-      }
-      
-      if (!user) {
-        console.warn(`⚠️ [DEBUG] [${functionCallId}] No user data available yet`);
-        return;
-      }
-
-      console.log(`🔄 [DEBUG] [${functionCallId}] Starting fetchCourseData`);
-      setLoading(true);
-      try {
-        console.log('🔍 [DEBUG] ========== STARTING COURSE ACCESS CHECK ==========');
-        console.log('🔍 [DEBUG] Initial data:', {
-          courseId: courseId,
-          courseIdString: String(courseId),
-          userEmail: user?.email,
-          userEmailType: typeof user?.email,
-          userUid: user?.uid,
-          userUidType: typeof user?.uid,
-          userRole: user?.role,
-          userFullObject: JSON.stringify(user, null, 2)
-        });
-        
-        // Pobierz dane kursu
-        console.log('📥 [DEBUG] Fetching course document from Firestore...', {
-          collection: 'courses',
-          documentId: String(courseId)
-        });
-        
+  const fetchCourseData = useCallback(async () => {
+    if (!courseId || !user) return;
+    
+    const cacheKey = `student_course_detail_${courseId}_${user.uid}`;
+    const cached = getSessionCache<{
+      course: any;
+      sections: any[];
+      quizzes: any[];
+    }>(cacheKey);
+    
+    if (cached) {
+      setCourse(cached.course);
+      setSections(cached.sections);
+      setQuizzes(cached.quizzes);
+      setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // Pobierz dane kursu
+      const courseData = await measureAsync('StudentCourseDetail:fetchCourse', async () => {
         const courseDoc = await getDoc(doc(db, "courses", String(courseId)));
         
-        console.log('📥 [DEBUG] Course document fetch result:', {
-          exists: courseDoc.exists(),
-          id: courseDoc.id,
-          hasData: courseDoc.exists() ? 'yes' : 'no'
-        });
-        
         if (!courseDoc.exists()) {
-          console.error('❌ [DEBUG] Course document does not exist:', {
-            requestedId: courseId,
-            requestedIdString: String(courseId),
-            documentId: courseDoc.id
-          });
           setError("Nie znaleziono kursu.");
           setLoading(false);
-          return;
+          return null;
         }
 
         const courseData = courseDoc.data();
-        console.log('📋 [DEBUG] Raw course data from Firestore:', courseData);
         
-        // DEBUG: Loguj pełne dane kursu i użytkownika
-        console.log('🔍 [DEBUG] Course document data:', {
-          courseId: courseId,
-          courseDocId: courseDoc.id,
-          courseTitle: courseData.title,
-          courseSlug: courseData.slug,
-          assignedUsers: courseData.assignedUsers || [],
-          assignedUsersType: Array.isArray(courseData.assignedUsers),
-          assignedUsersLength: courseData.assignedUsers?.length || 0,
-          assignedClasses: courseData.assignedClasses || [],
-          assignedClassesType: Array.isArray(courseData.assignedClasses),
-          assignedClassesLength: courseData.assignedClasses?.length || 0,
-          teacherEmail: courseData.teacherEmail,
-          createdBy: courseData.created_by,
-          isActive: courseData.is_active
-        });
-        
-        console.log('🔍 [DEBUG] User data:', {
-          userEmail: user?.email,
-          userUid: user?.uid,
-          userRole: user?.role,
-          userClasses: (user as any).classes || [],
-          userClassesType: Array.isArray((user as any).classes),
-          userClassesLength: (user as any).classes?.length || 0
-        });
-        
-        // Sprawdź czy uczeń ma dostęp do kursu
+        // Sprawdź dostęp do kursu
         const assignedUsers = courseData.assignedUsers || [];
         const assignedClasses = courseData.assignedClasses || [];
-        
-        console.log('🔍 [DEBUG] ========== ACCESS CHECK DETAILS ==========');
-        console.log('🔍 [DEBUG] Extracted assignment arrays:', {
-          assignedUsers: assignedUsers,
-          assignedUsersRaw: courseData.assignedUsers,
-          assignedUsersIsArray: Array.isArray(assignedUsers),
-          assignedUsersLength: assignedUsers.length,
-          assignedClasses: assignedClasses,
-          assignedClassesRaw: courseData.assignedClasses,
-          assignedClassesIsArray: Array.isArray(assignedClasses),
-          assignedClassesLength: assignedClasses.length
-        });
+        const isAdmin = user?.role === 'admin';
+        const userEmail = user?.email?.trim().toLowerCase();
+        const userUid = user?.uid;
         
         // Sprawdź dostęp przez email lub uid
-        const isAdmin = user?.role === 'admin';
-        
-        // Szczegółowe porównanie emaili
-        const userEmail = user?.email;
-        const userEmailTrimmed = userEmail?.trim().toLowerCase();
-        const hasEmailAccess = assignedUsers.some((assigned: any) => {
-          const assignedStr = String(assigned).trim().toLowerCase();
-          const match = assignedStr === userEmailTrimmed;
-          if (match) {
-            console.log('✅ [DEBUG] Email match found:', { assigned, userEmail });
-          }
-          return match;
-        });
-        
-        // Szczegółowe porównanie UID
-        const userUid = user?.uid;
-        const hasUidAccess = assignedUsers.some((assigned: any) => {
-          const assignedStr = String(assigned);
-          const match = assignedStr === userUid;
-          if (match) {
-            console.log('✅ [DEBUG] UID match found:', { assigned, userUid });
-          }
-          return match;
-        });
-        
-        console.log('🔍 [DEBUG] Direct user assignment check:', {
-          isAdmin,
-          isAdminCheck: user?.role === 'admin',
-          userRole: user?.role,
-          hasEmailAccess,
-          hasEmailAccessCheck: assignedUsers.includes(user?.email),
-          userEmail: userEmail,
-          userEmailTrimmed: userEmailTrimmed,
-          hasUidAccess,
-          hasUidAccessCheck: assignedUsers.includes(user?.uid),
-          userUid: userUid,
-          assignedUsersArray: assignedUsers,
-          assignedUsersArrayDetails: assignedUsers.map((u: any, idx: number) => ({
-            index: idx,
-            value: u,
-            type: typeof u,
-            stringValue: String(u),
-            trimmed: String(u).trim().toLowerCase(),
-            matchesEmail: String(u).trim().toLowerCase() === userEmailTrimmed,
-            matchesUid: String(u) === userUid
-          }))
-        });
+        const hasEmailAccess = userEmail && assignedUsers.some((assigned: any) => 
+          String(assigned).trim().toLowerCase() === userEmail
+        );
+        const hasUidAccess = userUid && assignedUsers.some((assigned: any) => 
+          String(assigned) === userUid
+        );
         
         let hasAccess = isAdmin || hasEmailAccess || hasUidAccess;
         
-        console.log('🔍 [DEBUG] Initial access result (before class check):', {
-          hasAccess,
-          isAdmin,
-          hasEmailAccess,
-          hasUidAccess
-        });
-        
-        // Jeśli nie ma dostępu przez assignedUsers, sprawdź klasy
-        const userClasses = (user as any).classes;
-        const userClassesIsArray = Array.isArray(userClasses);
-        const userClassesLength = userClassesIsArray ? userClasses.length : 0;
-        const userClassesHasItems = userClassesLength > 0;
-        
-        console.log('🔍 [DEBUG] User classes check:', {
-          userClasses: userClasses,
-          userClassesType: typeof userClasses,
-          userClassesIsArray: userClassesIsArray,
-          userClassesLength: userClassesLength,
-          userClassesHasItems: userClassesHasItems,
-          assignedClassesLength: assignedClasses.length,
-          willCheckClasses: !hasAccess && userClassesHasItems && assignedClasses.length > 0
-        });
-        
-        if (!hasAccess && userClassesHasItems && assignedClasses.length > 0) {
-          console.log('🔍 [DEBUG] ========== CHECKING CLASS-BASED ACCESS ==========');
-          console.log('🔍 [DEBUG] Class arrays:', {
-            userClasses: userClasses,
-            userClassesDetails: userClasses.map((c: any, idx: number) => ({
-              index: idx,
-              value: c,
-              type: typeof c,
-              stringValue: String(c)
-            })),
-            assignedClasses: assignedClasses,
-            assignedClassesDetails: assignedClasses.map((c: any, idx: number) => ({
-              index: idx,
-              value: c,
-              type: typeof c,
-              stringValue: String(c)
-            }))
-          });
-          
-          const matchingClasses = assignedClasses.filter((classId: string) => {
-            const classIdStr = String(classId);
-            const match = userClasses.some((userClass: any) => String(userClass) === classIdStr);
-            if (match) {
-              console.log('✅ [DEBUG] Class match found:', { classId, userClass: userClasses.find((uc: any) => String(uc) === classIdStr) });
-            }
-            return match;
-          });
-          
-          console.log('🔍 [DEBUG] Class matching result:', {
-            matchingClasses: matchingClasses,
-            matchingClassesCount: matchingClasses.length,
-            hasClassAccess: matchingClasses.length > 0
-          });
-          
-          const newHasAccess = matchingClasses.length > 0;
-          console.log('🔍 [DEBUG] Setting hasAccess:', {
-            oldHasAccess: hasAccess,
-            newHasAccess: newHasAccess,
-            matchingClassesLength: matchingClasses.length
-          });
-          hasAccess = newHasAccess;
-          console.log('🔍 [DEBUG] hasAccess after assignment:', hasAccess, typeof hasAccess);
-        } else if (!hasAccess) {
-          console.log('🔍 [DEBUG] Skipping class check - conditions not met:', {
-            hasAccess,
-            userClassesHasItems,
-            assignedClassesLength: assignedClasses.length,
-            reason: !userClassesHasItems ? 'user has no classes' : assignedClasses.length === 0 ? 'course has no assigned classes' : 'already has access'
-          });
-        }
-        
-        const accessMethod = isAdmin ? 'admin' : hasEmailAccess ? 'email' : hasUidAccess ? 'uid' : hasAccess ? 'class' : 'none';
-        
-        console.log(`🔍 [DEBUG] [${functionCallId}] ========== FINAL ACCESS RESULT ==========`);
-        console.log(`🔍 [DEBUG] [${functionCallId}] Final access result:`, { 
-          hasAccess,
-          hasAccessType: typeof hasAccess,
-          hasAccessValue: String(hasAccess),
-          accessMethod: accessMethod,
-          breakdown: {
-            isAdmin,
-            hasEmailAccess,
-            hasUidAccess,
-            hasClassAccess: hasAccess && !isAdmin && !hasEmailAccess && !hasUidAccess
+        // Jeśli nie ma dostępu, sprawdź klasy
+        if (!hasAccess) {
+          const userClasses = (user as any).classes;
+          if (Array.isArray(userClasses) && userClasses.length > 0 && assignedClasses.length > 0) {
+            hasAccess = assignedClasses.some((classId: string) =>
+              userClasses.some((userClass: any) => String(userClass) === String(classId))
+            );
           }
-        });
-        
-        // Dodatkowe sprawdzenie tuż przed warunkiem
-        const willDenyAccess = !hasAccess;
-        console.log(`🔍 [DEBUG] [${functionCallId}] Pre-condition check:`, {
-          hasAccess: hasAccess,
-          notHasAccess: !hasAccess,
-          willEnterIfBlock: willDenyAccess,
-          hasAccessBoolean: Boolean(hasAccess),
-          hasAccessStrictFalse: hasAccess === false,
-          hasAccessStrictTrue: hasAccess === true,
-          willDenyAccess: willDenyAccess
-        });
-        
-        // CRITICAL: Sprawdź czy hasAccess nie jest przypadkiem nadpisywane
-        if (hasAccess !== true && hasAccess !== false) {
-          console.error(`🚨 [DEBUG] [${functionCallId}] CRITICAL: hasAccess is not a boolean!`, {
-            hasAccess,
-            type: typeof hasAccess,
-            value: String(hasAccess)
-          });
         }
         
-        if (willDenyAccess) {
-          console.log(`⚠️ [DEBUG] [${functionCallId}] ENTERING ACCESS DENIED BLOCK - hasAccess is:`, hasAccess, typeof hasAccess);
-          console.error(`❌ [DEBUG] [${functionCallId}] ========== ACCESS DENIED ==========`);
-          console.error(`❌ [DEBUG] [${functionCallId}] Full diagnostic report:`, {
-            courseId: courseId,
-            courseTitle: courseData.title,
-            courseSlug: courseData.slug,
-            assignedUsers: assignedUsers,
-            assignedUsersDetails: assignedUsers.map((u: any, idx: number) => ({
-              index: idx,
-              value: u,
-              type: typeof u,
-              stringValue: String(u),
-              trimmed: String(u).trim().toLowerCase()
-            })),
-            assignedClasses: assignedClasses,
-            assignedClassesDetails: assignedClasses.map((c: any, idx: number) => ({
-              index: idx,
-              value: c,
-              type: typeof c,
-              stringValue: String(c)
-            })),
-            userData: {
-              email: user?.email,
-              emailTrimmed: user?.email?.trim().toLowerCase(),
-              uid: user?.uid,
-              role: user?.role,
-              classes: (user as any).classes,
-              classesType: typeof (user as any).classes,
-              classesIsArray: Array.isArray((user as any).classes),
-              classesLength: Array.isArray((user as any).classes) ? (user as any).classes.length : 0
-            },
-            checks: {
-              isAdmin,
-              emailMatch: hasEmailAccess,
-              uidMatch: hasUidAccess,
-              classMatch: hasAccess && !isAdmin && !hasEmailAccess && !hasUidAccess
-            },
-            recommendations: [
-              !assignedUsers.length && !assignedClasses.length ? 'Course has no assigned users or classes' : '',
-              !user?.email && !user?.uid ? 'User has no email or UID' : '',
-              !(user as any).classes || !Array.isArray((user as any).classes) || (user as any).classes.length === 0 ? 'User has no classes assigned' : ''
-            ].filter(Boolean)
-          });
+        if (!hasAccess) {
           setError("Nie masz dostępu do tego kursu. Skontaktuj się z nauczycielem.");
           setLoading(false);
-          return;
+          return null;
         }
         
-        console.log(`✅ [DEBUG] [${functionCallId}] ========== ACCESS GRANTED ==========`);
-        console.log(`✅ [DEBUG] [${functionCallId}] Access granted via:`, accessMethod);
+        // Pobierz quizy
+        const quizzesSnapshot = await getDocs(query(collection(db, "quizzes"), where("courseId", "==", String(courseId))));
         
-        setCourse(courseData);
-        setSections(courseData.sections || []);
-
-        // Pobierz quizy przypisane do tego kursu
-        const quizzesQuery = query(
-          collection(db, "quizzes"),
-          where("courseId", "==", String(courseId))
-        );
-        const quizzesSnapshot = await getDocs(quizzesQuery);
         const quizzesData = quizzesSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
-        setQuizzes(quizzesData);
-
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching course:", err);
-        setError("Błąd podczas ładowania kursu.");
-        setLoading(false);
+        
+        return {
+          course: courseData,
+          sections: courseData.sections || [],
+          quizzes: quizzesData
+        };
+      });
+      
+      if (courseData) {
+        setCourse(courseData.course);
+        setSections(courseData.sections);
+        setQuizzes(courseData.quizzes);
+        setSessionCache(cacheKey, courseData);
       }
-    };
+    } catch (err) {
+      console.error("Error fetching course:", err);
+      setError("Błąd podczas ładowania kursu.");
+    } finally {
+      setLoading(false);
+    }
+  }, [courseId, user]);
 
-    if (!authLoading) {
+  useEffect(() => {
+    if (!authLoading && courseId && user) {
       fetchCourseData();
     }
-  }, [courseId, user, authLoading]);
+  }, [authLoading, courseId, user, fetchCourseData]);
 
   if (authLoading || loading) {
   return (

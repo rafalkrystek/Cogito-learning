@@ -1,11 +1,12 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import Providers from '@/components/Providers';
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
 
 interface Course {
   id: string;
@@ -21,23 +22,61 @@ interface Course {
   completedLessons: number;
 }
 
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
+
 function StudentCoursesContent() {
   const { user } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const coursesPerPage = 12; // Responsive: 12 na desktop, mniej na mobile
 
-  useEffect(() => {
+  const fetchCourses = useCallback(async () => {
     if (!user) return;
     
-    const fetchCourses = async () => {
-      try {
-        setLoading(true);
-        
-        // Pobierz kursy przypisane do ucznia - użyj query z where zamiast pobierania wszystkich
-        const coursesCollection = collection(db, 'courses');
-        
+    const cacheKey = `student_courses_${user.uid}`;
+    const cached = getSessionCache<Course[]>(cacheKey);
+    
+    if (cached) {
+      setCourses(cached);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      const coursesCollection = collection(db, 'courses');
+      
+      const userCourses = await measureAsync('StudentCourses:fetchCourses', async () => {
         // Firestore nie obsługuje OR w jednym zapytaniu, więc użyj dwóch równoległych zapytań
         const [coursesByUid, coursesByEmail] = await Promise.all([
           getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.uid))),
@@ -66,7 +105,7 @@ function StudentCoursesContent() {
           });
         }
         
-        const userCourses = Array.from(coursesMap.values())
+        return Array.from(coursesMap.values())
           .map((course: any) => ({
             id: course.id,
             title: course.title || 'Brak tytułu',
@@ -80,28 +119,45 @@ function StudentCoursesContent() {
             totalLessons: course.totalLessons || 0,
             completedLessons: course.completedLessons || 0
           }));
+      });
 
-        setCourses(userCourses);
-      } catch (error) {
-        console.error('Error fetching courses:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCourses();
+      setCourses(userCourses);
+      setSessionCache(cacheKey, userCourses);
+    } catch (error) {
+      console.error('Error fetching courses:', error);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
-  // Filtruj kursy
-  const filteredCourses = courses.filter(course => {
-    const matchesSubject = selectedSubject === 'all' || course.subject === selectedSubject;
-    const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         course.description.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSubject && matchesSearch;
-  });
+  useEffect(() => {
+    fetchCourses();
+  }, [fetchCourses]);
 
-  // Pobierz unikalne przedmioty
-  const subjects = ['all', ...Array.from(new Set(courses.map(c => c.subject)))];
+  // Memoized filtered courses
+  const filteredCourses = useMemo(() => {
+    return courses.filter(course => {
+      const matchesSubject = selectedSubject === 'all' || course.subject === selectedSubject;
+      const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           course.description.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesSubject && matchesSearch;
+    });
+  }, [courses, selectedSubject, searchTerm]);
+
+  // Pagination
+  const paginatedCourses = useMemo(() => {
+    const startIndex = (currentPage - 1) * coursesPerPage;
+    return filteredCourses.slice(startIndex, startIndex + coursesPerPage);
+  }, [filteredCourses, currentPage, coursesPerPage]);
+
+  const totalPages = useMemo(() => {
+    return Math.ceil(filteredCourses.length / coursesPerPage);
+  }, [filteredCourses.length, coursesPerPage]);
+
+  // Memoized subjects
+  const subjects = useMemo(() => {
+    return ['all', ...Array.from(new Set(courses.map(c => c.subject)))];
+  }, [courses]);
 
   const getProgressColor = (progress: number) => {
     if (progress >= 80) return 'bg-green-500';
@@ -193,8 +249,9 @@ function StudentCoursesContent() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-            {filteredCourses.map((course) => (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+              {paginatedCourses.map((course) => (
               <div key={course.id} className="bg-white/90 backdrop-blur-xl rounded-xl p-4 md:p-6 border border-white/20 hover:border-[#4067EC] transition-all duration-300 hover:shadow-lg">
                 {/* Course Header */}
                 <div className="flex items-start gap-3 mb-4">
@@ -280,8 +337,32 @@ function StudentCoursesContent() {
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-6">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Poprzednia
+                </button>
+                <span className="px-4 py-2 text-gray-700">
+                  Strona {currentPage} z {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Następna
+                </button>
+              </div>
+            )}
+          </>
         )}
         </div>
       </div>

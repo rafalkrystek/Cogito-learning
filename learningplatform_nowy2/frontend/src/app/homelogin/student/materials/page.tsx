@@ -1,11 +1,40 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import Providers from '@/components/Providers';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Material {
   id: string;
@@ -27,54 +56,122 @@ function StudentMaterialsContent() {
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
+  const fetchMaterials = useCallback(async () => {
     if (!user) return;
     
-    const fetchMaterials = async () => {
-      try {
-        setLoading(true);
-        
-        // Pobierz kursy ucznia
+    const cacheKey = `student_materials_${user.uid}`;
+    const cached = getSessionCache<Material[]>(cacheKey);
+    
+    if (cached) {
+      setMaterials(cached);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // OPTYMALIZACJA: Pobierz tylko kursy ucznia używając where, nie wszystkie kursy!
+      const userCourses = await measureAsync('StudentMaterials:fetchCourses', async () => {
         const coursesCollection = collection(db, 'courses');
-        const coursesSnapshot = await getDocs(coursesCollection);
-        const userCourses = coursesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((course: any) => 
-            course.assignedUsers && 
-            (course.assignedUsers.includes(user.uid) || course.assignedUsers.includes(user.email))
-          );
-
-        // Pobierz materiały z kursów ucznia
-        const materialsCollection = collection(db, 'materials');
-        const materialsSnapshot = await getDocs(materialsCollection);
         
-        const materialsList = materialsSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as Material))
-          .filter((material: Material) => 
-            userCourses.some(course => course.id === material.courseId)
+        // Równoległe zapytania dla uid i email
+        const [coursesByUid, coursesByEmail] = await Promise.all([
+          getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.uid))),
+          user.email ? getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.email))) : Promise.resolve({ docs: [] } as any)
+        ]);
+        
+        // Połącz i deduplikuj
+        const coursesMap = new Map();
+        [...coursesByUid.docs, ...coursesByEmail.docs].forEach(doc => {
+          coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+        
+        // Sprawdź kursy przypisane do klas
+        if ((user as any).classes && Array.isArray((user as any).classes) && (user as any).classes.length > 0) {
+          const classQueries = (user as any).classes.map((classId: string) =>
+            getDocs(query(coursesCollection, where('assignedClasses', 'array-contains', classId)))
           );
+          const classSnapshots = await Promise.all(classQueries);
+          classSnapshots.forEach(snapshot => {
+            snapshot.docs.forEach((doc: any) => {
+              if (!coursesMap.has(doc.id)) {
+                coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+              }
+            });
+          });
+        }
+        
+        return Array.from(coursesMap.values());
+      });
 
-        setMaterials(materialsList);
-      } catch (error) {
-        console.error('Error fetching materials:', error);
-      } finally {
+      const courseIds = userCourses.map((c: any) => c.id);
+      
+      if (courseIds.length === 0) {
+        setMaterials([]);
         setLoading(false);
+        return;
       }
-    };
 
-    fetchMaterials();
+      // OPTYMALIZACJA: Pobierz tylko materiały z kursów ucznia używając where z 'in'
+      // Firestore 'in' może mieć max 10 elementów, więc chunkujemy
+      const materialsList = await measureAsync('StudentMaterials:fetchMaterials', async () => {
+        const materialsCollection = collection(db, 'materials');
+        const chunks: string[][] = [];
+        for (let i = 0; i < courseIds.length; i += 10) {
+          chunks.push(courseIds.slice(i, i + 10));
+        }
+        
+        const materialQueries = chunks.map(chunk =>
+          getDocs(query(materialsCollection, where('courseId', 'in', chunk)))
+        );
+        
+        const materialSnapshots = await Promise.all(materialQueries);
+        return materialSnapshots.flatMap(snapshot =>
+          snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Material))
+        );
+      });
+
+      setMaterials(materialsList);
+      setSessionCache(cacheKey, materialsList);
+    } catch (error) {
+      console.error('Error fetching materials:', error);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
-  // Filtruj materiały
-  const filteredMaterials = materials.filter(material => {
-    const matchesSubject = selectedSubject === 'all' || material.subject === selectedSubject;
-    const matchesSearch = material.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         material.description.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSubject && matchesSearch;
-  });
+  useEffect(() => {
+    fetchMaterials();
+  }, [fetchMaterials]);
 
-  // Pobierz unikalne przedmioty
-  const subjects = ['all', ...Array.from(new Set(materials.map(m => m.subject)))];
+  // Memoized filtered materials
+  const filteredMaterials = useMemo(() => {
+    return materials.filter(material => {
+      const matchesSubject = selectedSubject === 'all' || material.subject === selectedSubject;
+      const matchesSearch = material.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           material.description.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesSubject && matchesSearch;
+    });
+  }, [materials, selectedSubject, searchTerm]);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const materialsPerPage = 12; // Responsive
+
+  const paginatedMaterials = useMemo(() => {
+    const startIndex = (currentPage - 1) * materialsPerPage;
+    return filteredMaterials.slice(startIndex, startIndex + materialsPerPage);
+  }, [filteredMaterials, currentPage, materialsPerPage]);
+
+  const totalPages = useMemo(() => {
+    return Math.ceil(filteredMaterials.length / materialsPerPage);
+  }, [filteredMaterials.length, materialsPerPage]);
+
+  // Memoized subjects
+  const subjects = useMemo(() => {
+    return ['all', ...Array.from(new Set(materials.map(m => m.subject)))];
+  }, [materials]);
 
   const getMaterialIcon = (type: string) => {
     switch (type) {
@@ -168,8 +265,9 @@ function StudentMaterialsContent() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-            {filteredMaterials.map((material) => (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+              {paginatedMaterials.map((material) => (
               <div key={material.id} className="bg-white/90 backdrop-blur-xl rounded-xl p-4 md:p-6 border border-white/20 hover:border-[#4067EC] transition-all duration-300 hover:shadow-lg">
                 <div className="flex items-start gap-3 mb-4">
                   <div className="text-3xl">{getMaterialIcon(material.type)}</div>
@@ -229,8 +327,32 @@ function StudentMaterialsContent() {
                   </Link>
                 )}
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-6">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Poprzednia
+                </button>
+                <span className="px-4 py-2 text-gray-700">
+                  Strona {currentPage} z {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 bg-[#4067EC] text-white rounded-lg hover:bg-[#3050b3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Następna
+                </button>
+              </div>
+            )}
+          </>
         )}
         </div>
       </div>

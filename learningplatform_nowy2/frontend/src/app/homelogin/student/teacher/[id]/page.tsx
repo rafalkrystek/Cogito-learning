@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -12,6 +12,35 @@ import {
   AlertCircle,
   Trophy
 } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Achievement {
   id: string;
@@ -78,162 +107,93 @@ export default function TeacherProfilePage() {
   const fetchTeacherProfile = useCallback(async () => {
     if (!teacherId) return;
     
+    const cacheKey = `student_teacher_profile_${teacherId}`;
+    const cached = getSessionCache<{
+      teacher: TeacherProfile;
+      courses: Course[];
+      badges: Badge[];
+    }>(cacheKey);
+    
+    if (cached) {
+      setTeacher(cached.teacher);
+      setCourses(cached.courses);
+      setBadges(cached.badges);
+      setLoading(false);
+      return;
+    }
+    
     try {
       setLoading(true);
       setError(null);
       
       // Pobierz dane nauczyciela
-      const teacherDocRef = doc(db, 'users', teacherId);
-      const teacherSnap = await getDoc(teacherDocRef);
+      const teacherData = await measureAsync('StudentTeacherProfile:fetchTeacher', async () => {
+        const teacherDocRef = doc(db, 'users', teacherId);
+        const teacherSnap = await getDoc(teacherDocRef);
+        
+        if (!teacherSnap.exists()) {
+          throw new Error('Nauczyciel nie został znaleziony.');
+        }
+        
+        return teacherSnap.data();
+      });
       
-      if (!teacherSnap.exists()) {
-        setError('Nauczyciel nie został znaleziony.');
-        return;
-      }
-
-      const teacherData = teacherSnap.data();
-      
-      // Oblicz statystyki z Firebase
+      // Użyj statystyk z dokumentu (szybsze)
       let activeCourses = teacherData.activeCourses || 0;
       let totalStudents = teacherData.totalStudents || 0;
       let averageRating = teacherData.averageRating || 0;
       
-      // Pobierz kursy nauczyciela
-      const coursesCollection = collection(db, 'courses');
-      const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
-        getDocs(query(coursesCollection, where('created_by', '==', teacherData.email))),
-        getDocs(query(coursesCollection, where('created_by', '==', teacherId))),
-        getDocs(query(coursesCollection, where('teacherEmail', '==', teacherData.email)))
-      ]);
-      
-      const coursesMap = new Map();
-      [coursesByEmail, coursesByUid, coursesByTeacherEmail].forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+      // Pobierz kursy nauczyciela równolegle (tylko raz!)
+      const { teacherCourses, coursesMap, totalLessons } = await measureAsync('StudentTeacherProfile:fetchCourses', async () => {
+        const coursesCollection = collection(db, 'courses');
+        const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
+          getDocs(query(coursesCollection, where('created_by', '==', teacherData.email))),
+          getDocs(query(coursesCollection, where('created_by', '==', teacherId))),
+          getDocs(query(coursesCollection, where('teacherEmail', '==', teacherData.email)))
+        ]);
+        
+        const coursesMap = new Map();
+        [coursesByEmail, coursesByUid, coursesByTeacherEmail].forEach(snapshot => {
+          snapshot.docs.forEach(doc => {
+            coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
         });
+        
+        activeCourses = coursesMap.size;
+        
+        // Oblicz liczbę lekcji z już pobranych kursów
+        let totalLessons = 0;
+        coursesMap.forEach((course: any) => {
+          if (course.sections && Array.isArray(course.sections)) {
+            course.sections.forEach((section: any) => {
+              if (section.subsections && section.subsections.length > 0) {
+                totalLessons += section.subsections.length;
+              } else if (section.contents && section.contents.length > 0) {
+                totalLessons += 1;
+              }
+            });
+          }
+        });
+        
+        const teacherCourses = Array.from(coursesMap.values()).map((course: any) => ({
+          id: course.id,
+          title: course.title || 'Brak tytułu',
+          description: course.description || '',
+          subject: course.subject || course.category_name || '',
+          thumbnail: course.thumbnail || ''
+        }));
+        
+        return { teacherCourses, coursesMap, totalLessons };
       });
       
-      const teacherCourses: Course[] = Array.from(coursesMap.values()).map((course: any) => ({
-        id: course.id,
-        title: course.title || 'Brak tytułu',
-        description: course.description || '',
-        subject: course.subject || course.category_name || '',
-        thumbnail: course.thumbnail || ''
-      }));
-      
-      activeCourses = coursesMap.size;
       setCourses(teacherCourses);
       
-      // Pobierz uczniów przypisanych do kursów
-      const allAssignedUsers = new Set<string>();
-      coursesMap.forEach((course: any) => {
-        if (course.assignedUsers && Array.isArray(course.assignedUsers)) {
-          course.assignedUsers.forEach((userId: string) => allAssignedUsers.add(userId));
-        }
-      });
+      // OPTYMALIZACJA: Pomiń ciężkie obliczanie statystyk - używaj tylko z dokumentu
+      // Obliczanie uczniów, ocen, aktywności jest bardzo ciężkie i nie jest potrzebne przy każdym ładowaniu
       
-      const uniqueStudents = new Set<string>();
-      for (const userId of allAssignedUsers) {
-        try {
-          let studentDoc;
-          if (userId.includes('@')) {
-            const studentsCollection = collection(db, 'users');
-            const emailQuery = query(studentsCollection, where("email", "==", userId), where("role", "==", "student"));
-            const emailSnapshot = await getDocs(emailQuery);
-            if (!emailSnapshot.empty) {
-              studentDoc = emailSnapshot.docs[0];
-            }
-          } else {
-            const userDocRef = doc(db, 'users', userId);
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists() && userDocSnap.data().role === 'student') {
-              studentDoc = userDocSnap;
-            }
-          }
-          
-          if (studentDoc) {
-            uniqueStudents.add(studentDoc.id);
-          }
-        } catch (error) {
-          console.error(`Błąd podczas pobierania ucznia ${userId}:`, error);
-        }
-      }
-      
-      totalStudents = uniqueStudents.size;
-      
-      // Pobierz średnią ocenę z ankiet
-      try {
-        const surveysCollection = collection(db, 'teacherSurveys');
-        const surveysQuery = query(surveysCollection, where('teacherId', '==', teacherId));
-        const surveysSnapshot = await getDocs(surveysQuery);
-        
-        if (!surveysSnapshot.empty) {
-          let totalScore = 0;
-          let count = 0;
-          
-          surveysSnapshot.docs.forEach(doc => {
-            const data = doc.data();
-            if (data.averageScore && typeof data.averageScore === 'number') {
-              totalScore += data.averageScore;
-              count++;
-            } else if (data.responses) {
-              const scores = Object.values(data.responses).filter((score: any) => typeof score === 'number');
-              if (scores.length > 0) {
-                const avg = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
-                totalScore += avg;
-                count++;
-              }
-            }
-          });
-          
-          if (count > 0) {
-            averageRating = totalScore / count;
-          }
-        }
-      } catch (error) {
-        console.error('Błąd podczas pobierania ankiet:', error);
-      }
-      
-      // Pobierz dodatkowe dane dla odznak
-      let totalLessons = 0;
-      let totalGrades = 0;
-      let activeDays = 0;
-      
-      // Oblicz liczbę lekcji
-      coursesMap.forEach((course: any) => {
-        if (course.sections && Array.isArray(course.sections)) {
-          course.sections.forEach((section: any) => {
-            if (section.subsections && section.subsections.length > 0) {
-              totalLessons += section.subsections.length;
-            } else if (section.contents && section.contents.length > 0) {
-              totalLessons += 1;
-            }
-          });
-        }
-      });
-      
-      // Pobierz liczbę wystawionych ocen
-      try {
-        const gradesCollection = collection(db, 'grades');
-        const gradesQuery = query(gradesCollection, where('teacherId', '==', teacherId));
-        const gradesSnapshot = await getDocs(gradesQuery);
-        totalGrades = gradesSnapshot.docs.length;
-      } catch (error) {
-        console.error('Błąd podczas pobierania ocen:', error);
-      }
-      
-      // Pobierz liczbę aktywnych dni
-      try {
-        const learningTimeDoc = await getDoc(doc(db, 'userLearningTime', teacherId));
-        if (learningTimeDoc.exists()) {
-          const data = learningTimeDoc.data();
-          if (data.dailyStats) {
-            activeDays = Object.keys(data.dailyStats).length;
-          }
-        }
-      } catch (error) {
-        console.error('Błąd podczas pobierania aktywności:', error);
-      }
+      // Pobierz dodatkowe dane dla odznak (uproszczone)
+      let totalGrades = teacherData.totalGrades || 0;
+      let activeDays = teacherData.activeDays || 0;
       
       // Oblicz odznaki
       const calculateLevel = (value: number, thresholds: number[]): number => {
@@ -346,7 +306,7 @@ export default function TeacherProfilePage() {
       const sorted = calculatedBadges.sort((a, b) => b.currentLevel - a.currentLevel || b.currentProgress - a.currentProgress);
       setBadges(sorted);
       
-      setTeacher({
+      const teacherProfile: TeacherProfile = {
         id: teacherId,
         fullName: teacherData.fullName || teacherData.displayName || 'Brak nazwiska',
         displayName: teacherData.displayName || teacherData.fullName || 'Brak nazwiska',
@@ -363,6 +323,15 @@ export default function TeacherProfilePage() {
         totalStudents,
         averageRating,
         achievements: []
+      };
+      
+      setTeacher(teacherProfile);
+      
+      // Cache results
+      setSessionCache(cacheKey, {
+        teacher: teacherProfile,
+        courses: teacherCourses,
+        badges: calculatedBadges
       });
       
     } catch (err) {

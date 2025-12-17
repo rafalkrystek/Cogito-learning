@@ -1,12 +1,41 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { FirebaseQuizDisplay } from '@/components/FirebaseQuizDisplay';
 import Providers from '@/components/Providers';
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore cache errors
+  }
+}
 
 interface Quiz {
   id: string;
@@ -37,73 +66,130 @@ function StudentQuizzesPageContent() {
   const [loading, setLoading] = useState(true);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
 
-  useEffect(() => {
+  const fetchQuizzes = useCallback(async () => {
     if (!user) return;
     
-    const fetchQuizzes = async () => {
-      try {
-        setLoading(true);
-        // Pobierz quizy przypisane do kursów, w których uczestniczy uczeń
-        const quizzesCollection = collection(db, 'quizzes');
-        const quizzesSnapshot = await getDocs(quizzesCollection);
-        
-        // Pobierz kursy ucznia
+    const cacheKey = `student_quizzes_${user.uid}`;
+    const attemptsCacheKey = `student_quiz_attempts_${user.uid}`;
+    
+    // Check cache
+    const cachedQuizzes = getSessionCache<Quiz[]>(cacheKey);
+    const cachedAttempts = getSessionCache<Record<string, QuizAttempt[]>>(attemptsCacheKey);
+    
+    if (cachedQuizzes && cachedAttempts) {
+      setQuizzes(cachedQuizzes);
+      setQuizAttempts(cachedAttempts);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // OPTYMALIZACJA: Pobierz tylko kursy ucznia używając where, nie wszystkie!
+      const userCourses = await measureAsync('StudentQuizzes:fetchCourses', async () => {
         const coursesCollection = collection(db, 'courses');
-        const coursesSnapshot = await getDocs(coursesCollection);
-        const userCourses = coursesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((course: any) => {
-            // Sprawdź czy kurs jest przypisany bezpośrednio do użytkownika
-            const isDirectlyAssigned = course.assignedUsers && 
-              (course.assignedUsers.includes(user.uid) || course.assignedUsers.includes(user.email));
-            
-            // Sprawdź czy użytkownik jest w klasie, która ma przypisane kursy
-            const isInAssignedClass = course.assignedClasses && course.assignedClasses.length > 0 &&
-              (user as any).classes && (user as any).classes.some((classId: string) =>
-                course.assignedClasses.includes(classId)
-              );
-            
-            return isDirectlyAssigned || isInAssignedClass;
-          });
-
-        // Filtruj quizy tylko do kursów ucznia
-        const availableQuizzes = quizzesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as Quiz))
-          .filter((quiz: Quiz) => 
-            userCourses.some(course => course.id === quiz.course_id)
-          );
-
-        setQuizzes(availableQuizzes);
-
-        // Pobierz próby użytkownika dla wszystkich quizów
-        const attemptsMap: Record<string, QuizAttempt[]> = {};
         
-        for (const quiz of availableQuizzes) {
-          const attemptsQuery = query(
-            collection(db, 'quiz_attempts'),
-            where('quiz_id', '==', quiz.id),
-            where('user_id', '==', user.uid)
+        const [coursesByUid, coursesByEmail] = await Promise.all([
+          getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.uid))),
+          user.email ? getDocs(query(coursesCollection, where('assignedUsers', 'array-contains', user.email))) : Promise.resolve({ docs: [] } as any)
+        ]);
+        
+        const coursesMap = new Map();
+        [...coursesByUid.docs, ...coursesByEmail.docs].forEach(doc => {
+          coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+        
+        // Sprawdź kursy przypisane do klas
+        if ((user as any).classes && Array.isArray((user as any).classes) && (user as any).classes.length > 0) {
+          const classQueries = (user as any).classes.map((classId: string) =>
+            getDocs(query(coursesCollection, where('assignedClasses', 'array-contains', classId)))
           );
-          
-          const attemptsSnapshot = await getDocs(attemptsQuery);
-          const attempts = attemptsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as QuizAttempt[];
-          
-          attemptsMap[quiz.id] = attempts;
+          const classSnapshots = await Promise.all(classQueries);
+          classSnapshots.forEach(snapshot => {
+            snapshot.docs.forEach((doc: any) => {
+              if (!coursesMap.has(doc.id)) {
+                coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+              }
+            });
+          });
         }
         
-        setQuizAttempts(attemptsMap);
-      } catch (error) {
-        console.error('Error fetching quizzes:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+        return Array.from(coursesMap.values());
+      });
 
-    fetchQuizzes();
+      const courseIds = userCourses.map((c: any) => c.id);
+      
+      if (courseIds.length === 0) {
+        setQuizzes([]);
+        setQuizAttempts({});
+        setLoading(false);
+        return;
+      }
+
+      // OPTYMALIZACJA: Pobierz tylko quizy z kursów ucznia używając where z 'in'
+      const availableQuizzes = await measureAsync('StudentQuizzes:fetchQuizzes', async () => {
+        const quizzesCollection = collection(db, 'quizzes');
+        
+        // Chunk courseIds (max 10 w 'in')
+        const chunks: string[][] = [];
+        for (let i = 0; i < courseIds.length; i += 10) {
+          chunks.push(courseIds.slice(i, i + 10));
+        }
+        
+        const quizQueries = chunks.map(chunk =>
+          getDocs(query(quizzesCollection, where('course_id', 'in', chunk)))
+        );
+        
+        const quizSnapshots = await Promise.all(quizQueries);
+        return quizSnapshots.flatMap(snapshot =>
+          snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Quiz))
+        );
+      });
+
+      setQuizzes(availableQuizzes);
+
+      // OPTYMALIZACJA: Napraw N+1 problem - pobierz wszystkie próby jednym zapytaniem!
+      const attemptsMap = await measureAsync('StudentQuizzes:fetchAttempts', async () => {
+        // Pobierz wszystkie próby użytkownika jednym zapytaniem
+        const allAttemptsQuery = query(
+          collection(db, 'quiz_attempts'),
+          where('user_id', '==', user.uid)
+        );
+        
+        const allAttemptsSnapshot = await getDocs(allAttemptsQuery);
+        const allAttempts = allAttemptsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as QuizAttempt[];
+        
+        // Grupuj próby po quiz_id
+        const grouped: Record<string, QuizAttempt[]> = {};
+        allAttempts.forEach(attempt => {
+          if (!grouped[attempt.quiz_id]) {
+            grouped[attempt.quiz_id] = [];
+          }
+          grouped[attempt.quiz_id].push(attempt);
+        });
+        
+        return grouped;
+      });
+      
+      setQuizAttempts(attemptsMap);
+      
+      // Cache results
+      setSessionCache(cacheKey, availableQuizzes);
+      setSessionCache(attemptsCacheKey, attemptsMap);
+    } catch (error) {
+      console.error('Error fetching quizzes:', error);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchQuizzes();
+  }, [fetchQuizzes]);
 
   if (loading) {
     return (
@@ -166,7 +252,7 @@ function StudentQuizzesPageContent() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-            {quizzes.map((quiz) => {
+            {quizzes.slice(0, 12).map((quiz) => { // Lazy loading: pokaż tylko pierwsze 12
               const attempts = quizAttempts[quiz.id] || [];
               const completedAttempts = attempts.filter(attempt => attempt.completed_at);
               const canStartNewAttempt = completedAttempts.length < quiz.max_attempts;
