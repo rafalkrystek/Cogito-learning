@@ -1,12 +1,41 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { QuizQuestionEditor } from '@/components/QuizQuestionEditor';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { db } from '@/config/firebase';
-import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
 import QuizPreview from '@/components/QuizPreview';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 import { ArrowLeft, Save, Plus, Trash2, Settings, Edit, AlertTriangle, CheckCircle, Info, BookOpen, Zap, Sparkles, Search, Clock, ArrowUpDown, ArrowUp, ArrowDown, Eye } from 'lucide-react';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
 import { AIQuizGenerator } from '@/components/AIQuizGenerator';
@@ -107,6 +136,8 @@ export default function QuizManagementPage() {
   const [showImportQuiz, setShowImportQuiz] = useState(false);
   const [sortBy, setSortBy] = useState<'title' | 'created_at' | 'course_title' | 'subject' | 'questions_count'>('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [currentPage, setCurrentPage] = useState(1);
+  const quizzesPerPage = typeof window !== 'undefined' && window.innerWidth < 768 ? 8 : 12;
   
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -140,80 +171,93 @@ export default function QuizManagementPage() {
   }, []);
 
   const fetchQuizzes = useCallback(async () => {
+    if (!user?.email) return;
+    
     try {
       setIsLoading(true);
       setError(null);
       
-      console.log('Fetching quizzes from Firestore...');
-      
-      const quizzesCollection = collection(db, 'quizzes');
-      const quizzesQuery = query(
-        quizzesCollection,
-        where('created_by', '==', user?.email)
-      );
-      
-      const quizzesSnapshot = await getDocs(quizzesQuery);
-      const quizzesList = quizzesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        created_at: doc.data().created_at?.toDate?.()?.toISOString() || new Date().toISOString()
-      })) as Quiz[];
-      
-      console.log('Fetched quizzes:', quizzesList);
-      setQuizzes(quizzesList.map(convertQuizToLocal));
+      await measureAsync('TeacherQuizzes:fetchQuizzes', async () => {
+        // Check cache
+        const cacheKey = `teacher_quizzes_${user.email}`;
+        const cached = getSessionCache<LocalQuiz[]>(cacheKey);
+        
+        if (cached) {
+          setQuizzes(cached);
+          setIsLoading(false);
+          return;
+        }
+        
+        const quizzesCollection = collection(db, 'quizzes');
+        const quizzesQuery = query(
+          quizzesCollection,
+          where('created_by', '==', user.email),
+          limit(100)
+        );
+        
+        const quizzesSnapshot = await getDocs(quizzesQuery);
+        const quizzesList = quizzesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          created_at: doc.data().created_at?.toDate?.()?.toISOString() || new Date().toISOString()
+        })) as Quiz[];
+        
+        const localQuizzes = quizzesList.map(convertQuizToLocal);
+        setQuizzes(localQuizzes);
+        setSessionCache(cacheKey, localQuizzes);
+      });
     } catch (error) {
       console.error('Error fetching quizzes:', error);
       setError('Failed to load quizzes. Please try again later.');
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user?.email]);
 
   const fetchCourses = useCallback(async () => {
+    if (!user?.email) return;
+    
     try {
-      console.log('Fetching courses from Firestore...');
-      console.log('Current user email:', user?.email);
-      
-      const coursesCollection = collection(db, 'courses');
-      const coursesSnapshot = await getDocs(coursesCollection);
-      
-      const coursesList = coursesSnapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          console.log('Course data:', {
-            id: doc.id,
-            title: data.title,
-            teacherEmail: data.teacherEmail,
-            created_by: data.created_by
-          });
-          return {
-            id: doc.id,
-            ...data
-          } as Course;
-        })
-        .filter(course => {
-          const isTeacher = 
-            course.created_by === user?.email ||
-            course.teacherEmail === user?.email ||
-            (Array.isArray(course.assignedUsers) && course.assignedUsers.includes(user?.email || ''));
-
-          console.log(`Course ${course.title}:`, {
-            created_by: course.created_by,
-            teacherEmail: course.teacherEmail,
-            assignedUsers: course.assignedUsers,
-            isTeacher
-          });
-
-          return isTeacher;
-        }) as Course[];
-      
-      console.log('Filtered courses:', coursesList);
-      setCourses(coursesList);
+      await measureAsync('TeacherQuizzes:fetchCourses', async () => {
+        // Check cache
+        const cacheKey = `teacher_quizzes_courses_${user.email}`;
+        const cached = getSessionCache<Course[]>(cacheKey);
+        
+        if (cached) {
+          setCourses(cached);
+          return;
+        }
+        
+        const coursesCollection = collection(db, 'courses');
+        
+        // Fetch courses with where clauses (optimized - parallel queries)
+        const [createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
+          getDocs(query(coursesCollection, where('created_by', '==', user.email), limit(100))),
+          getDocs(query(coursesCollection, where('teacherEmail', '==', user.email), limit(100)))
+        ]);
+        
+        // Combine and deduplicate
+        const coursesMap = new Map<string, Course>();
+        
+        createdBySnapshot.docs.forEach(doc => {
+          coursesMap.set(doc.id, { id: doc.id, ...doc.data() } as Course);
+        });
+        
+        teacherEmailSnapshot.docs.forEach(doc => {
+          if (!coursesMap.has(doc.id)) {
+            coursesMap.set(doc.id, { id: doc.id, ...doc.data() } as Course);
+          }
+        });
+        
+        const coursesList = Array.from(coursesMap.values());
+        setCourses(coursesList);
+        setSessionCache(cacheKey, coursesList);
+      });
     } catch (error) {
       console.error('Error fetching courses:', error);
       setError('Failed to load courses. Please try again later.');
     }
-  }, [user]);
+  }, [user?.email]);
 
   const handleCreateQuiz = async () => {
     if (!newQuiz.title.trim()) {
@@ -274,7 +318,11 @@ export default function QuizManagementPage() {
 
       console.log('Saving quiz data:', quizData);
       await addDoc(quizzesCollection, quizData);
-      console.log('Quiz created successfully');
+      
+      // Invalidate cache
+      if (user?.email) {
+        sessionStorage.removeItem(`teacher_quizzes_${user.email}`);
+      }
       
       setIsCreating(false);
       setNewQuiz({
@@ -286,6 +334,7 @@ export default function QuizManagementPage() {
         max_attempts: 1,
         time_limit: 30,
       });
+      setCurrentPage(1);
       fetchQuizzes();
     } catch (error) {
       console.error('Error creating quiz:', error);
@@ -427,7 +476,11 @@ export default function QuizManagementPage() {
 
       console.log('Updating quiz data:', quizData);
       await updateDoc(quizRef, quizData);
-      console.log('Quiz updated successfully');
+      
+      // Invalidate cache
+      if (user?.email) {
+        sessionStorage.removeItem(`teacher_quizzes_${user.email}`);
+      }
       
       setIsEditing(false);
       setEditingQuiz(null);
@@ -459,8 +512,13 @@ export default function QuizManagementPage() {
       setError(null);
       
       await deleteDoc(doc(db, 'quizzes', quizId));
-      console.log('Quiz deleted successfully');
       
+      // Invalidate cache
+      if (user?.email) {
+        sessionStorage.removeItem(`teacher_quizzes_${user.email}`);
+      }
+      
+      setCurrentPage(1);
       fetchQuizzes();
     } catch (error) {
       console.error('Error deleting quiz:', error);
@@ -498,16 +556,22 @@ export default function QuizManagementPage() {
     course.subject?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const filteredQuizzes = quizzes.filter(quiz => 
-    quiz.title?.toLowerCase().includes(quizSearchTerm.toLowerCase()) ||
-    quiz.description?.toLowerCase().includes(quizSearchTerm.toLowerCase()) ||
-    quiz.subject?.toLowerCase().includes(quizSearchTerm.toLowerCase()) ||
-    quiz.course_title?.toLowerCase().includes(quizSearchTerm.toLowerCase())
-  );
+  // Memoized filtered quizzes
+  const filteredQuizzes = useMemo(() => {
+    if (!quizSearchTerm.trim()) return quizzes;
+    
+    const term = quizSearchTerm.toLowerCase();
+    return quizzes.filter(quiz => 
+      quiz.title?.toLowerCase().includes(term) ||
+      quiz.description?.toLowerCase().includes(term) ||
+      quiz.subject?.toLowerCase().includes(term) ||
+      quiz.course_title?.toLowerCase().includes(term)
+    );
+  }, [quizzes, quizSearchTerm]);
 
-  // Funkcja sortowania quizów
-  const sortQuizzes = (quizzes: LocalQuiz[]) => {
-    return [...quizzes].sort((a, b) => {
+  // Memoized sorted quizzes
+  const sortedAndFilteredQuizzes = useMemo(() => {
+    return [...filteredQuizzes].sort((a, b) => {
       let aValue: any;
       let bValue: any;
 
@@ -545,9 +609,16 @@ export default function QuizManagementPage() {
       }
       return 0;
     });
-  };
+  }, [filteredQuizzes, sortBy, sortOrder]);
 
-  const sortedAndFilteredQuizzes = sortQuizzes(filteredQuizzes);
+  // Memoized paginated quizzes
+  const paginatedQuizzes = useMemo(() => {
+    const startIndex = (currentPage - 1) * quizzesPerPage;
+    const endIndex = startIndex + quizzesPerPage;
+    return sortedAndFilteredQuizzes.slice(startIndex, endIndex);
+  }, [sortedAndFilteredQuizzes, currentPage, quizzesPerPage]);
+
+  const totalPages = useMemo(() => Math.ceil(sortedAndFilteredQuizzes.length / quizzesPerPage), [sortedAndFilteredQuizzes.length, quizzesPerPage]);
 
   const handleQuizDeleted = () => {
     fetchQuizzes();
@@ -1059,8 +1130,9 @@ export default function QuizManagementPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-4 flex-1 overflow-y-auto w-full">
-                {sortedAndFilteredQuizzes.map((quiz) => (
+              <>
+                <div className="space-y-4 flex-1 overflow-y-auto w-full">
+                  {paginatedQuizzes.map((quiz) => (
                   <div key={quiz.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -1111,8 +1183,32 @@ export default function QuizManagementPage() {
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Poprzednia
+                    </button>
+                    <span className="text-sm text-gray-600">
+                      Strona {currentPage} z {totalPages} ({sortedAndFilteredQuizzes.length} quizów)
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Następna
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

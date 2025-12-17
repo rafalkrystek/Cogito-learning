@@ -1,7 +1,7 @@
 'use client';
 
 import Link from "next/link";
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import StudentRoute from '@/components/StudentRoute';
 import ParentAccess from '@/components/ParentAccess';
 import { useAuth } from '@/context/AuthContext';

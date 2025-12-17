@@ -1,8 +1,37 @@
 "use client";
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 import { 
   Clock, 
   Plus, 
@@ -31,6 +60,7 @@ interface Lesson {
 }
 
 interface Class {
+  is_active?: boolean;
   id: string;
   name: string;
   grade_level: number;
@@ -130,23 +160,50 @@ export default function TeacherSchedule() {
   };
 
   const fetchClasses = useCallback(async () => {
+    if (!user?.uid && !user?.email) return;
+    
     try {
-      console.log('🔍 fetchClasses - rozpoczynam pobieranie klas');
-      const classesRef = collection(db, 'classes');
-      const classesSnapshot = await getDocs(classesRef);
-      
-      const classesData = classesSnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Class))
-        .filter(cls => cls.name); // Filtruj tylko klasy z nazwą
-      
-      console.log('🔍 fetchClasses - pobrano klas:', classesData.length);
-      console.log('📚 Klasy:', classesData.map(cls => `${cls.name} (${cls.subject})`));
-      
-      setClasses(classesData);
-    } catch (error) {
-      console.error('Error fetching classes:', error);
+      await measureAsync('TeacherSchedule:fetchClasses', async () => {
+        // Check cache
+        const cacheKey = `teacher_schedule_classes_${user.uid || user.email}`;
+        const cached = getSessionCache<Class[]>(cacheKey);
+        
+        if (cached) {
+          setClasses(cached);
+          return;
+        }
+
+        // Fetch classes with where clause if teacher_id or teacher_email exists
+        let classesQuery;
+        if (user.uid) {
+          classesQuery = query(
+            collection(db, 'classes'),
+            where('teacher_id', '==', user.uid),
+            limit(50)
+          );
+        } else if (user.email) {
+          classesQuery = query(
+            collection(db, 'classes'),
+            where('teacher_email', '==', user.email),
+            limit(50)
+          );
+        } else {
+          classesQuery = query(collection(db, 'classes'), limit(50));
+        }
+
+        const classesSnapshot = await getDocs(classesQuery);
+        
+        const classesData = classesSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Class))
+          .filter(cls => cls.name && cls.is_active !== false);
+        
+        setClasses(classesData);
+        setSessionCache(cacheKey, classesData);
+      });
+    } catch {
+      // Ignore
     }
-  }, []);
+  }, [user?.uid, user?.email]);
 
   const fetchLessons = useCallback(async () => {
     try {
@@ -200,8 +257,8 @@ export default function TeacherSchedule() {
       ];
       
       setLessons(mockLessons);
-    } catch (error) {
-      console.error('Error fetching lessons:', error);
+    } catch {
+      // Ignore
     } finally {
       setLoading(false);
     }
@@ -209,31 +266,28 @@ export default function TeacherSchedule() {
 
   useEffect(() => {
     if (user) {
-      console.log('🔍 useEffect - user changed:', user);
-      console.log('🔍 useEffect - wywołuję fetchClasses');
       fetchClasses();
-    } else {
-      console.log('🔍 useEffect - brak użytkownika');
     }
   }, [user, fetchClasses]);
 
   useEffect(() => {
     if (user) {
-      console.log('🔍 useEffect - currentWeek changed:', currentWeek);
-      console.log('🔍 useEffect - wywołuję fetchLessons');
       fetchLessons();
     }
   }, [user, currentWeek, classes, fetchLessons]);
 
-  const filteredLessons = lessons.filter(lesson => {
-    const matchesSearch = lesson.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         lesson.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         lesson.class.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDay = filterDay === 'all' || lesson.day === filterDay;
-    const matchesClass = filterClass === 'all' || lesson.class === filterClass;
-    
-    return matchesSearch && matchesDay && matchesClass;
-  });
+  // Memoized filtered lessons
+  const filteredLessons = useMemo(() => {
+    return lessons.filter(lesson => {
+      const matchesSearch = lesson.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           lesson.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           lesson.class.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesDay = filterDay === 'all' || lesson.day === filterDay;
+      const matchesClass = filterClass === 'all' || lesson.class === filterClass;
+      
+      return matchesSearch && matchesDay && matchesClass;
+    });
+  }, [lessons, searchTerm, filterDay, filterClass]);
 
   const getLessonsForDay = (day: string) => {
     return filteredLessons
@@ -335,10 +389,10 @@ export default function TeacherSchedule() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-8 mb-8 shadow-xl">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      <div className="flex-1 flex flex-col min-h-0 px-6 py-4">
+        {/* Header - Fixed */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 mb-4 shadow-xl flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -362,8 +416,8 @@ export default function TeacherSchedule() {
           </div>
         </div>
 
-        {/* Controls */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 mb-8 shadow-lg">
+        {/* Controls - Fixed */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 mb-4 shadow-lg flex-shrink-0">
           <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
             {/* Week Navigation */}
             <div className="flex items-center gap-4">
@@ -460,8 +514,8 @@ export default function TeacherSchedule() {
           </div>
         </div>
 
-        {/* Schedule Grid */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 shadow-lg">
+        {/* Schedule Grid - Scrollable */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 shadow-lg flex-1 overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 lg:grid-cols-7 gap-4">
             {days.map(day => {
               const dayLessons = getLessonsForDay(day.key);

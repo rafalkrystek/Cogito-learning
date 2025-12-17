@@ -1,10 +1,48 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp, updateDoc, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { MessageSquare, Send, User, Mail, CheckCircle2 } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Helper to chunk array for Firestore 'in' queries (max 10 items)
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 interface ParentMessage {
   id: string;
@@ -37,6 +75,121 @@ export default function TeacherMessagesPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [parentInfo, setParentInfo] = useState<{[key: string]: ParentInfo}>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const messagesPerPage = typeof window !== 'undefined' && window.innerWidth < 768 ? 10 : 20;
+
+  // Fetch parent info in parallel (fix N+1 problem)
+  const fetchParentInfo = useCallback(async (parentIds: string[]): Promise<{[key: string]: ParentInfo}> => {
+    const cacheKey = 'teacher_messages_parents';
+    const cached = getSessionCache<{[key: string]: ParentInfo}>(cacheKey);
+    
+    if (cached) {
+      // Check if we have all needed parents in cache
+      const missingIds = parentIds.filter(id => !cached[id]);
+      if (missingIds.length === 0) {
+        return cached;
+      }
+    }
+
+    const parentInfoMap: {[key: string]: ParentInfo} = cached || {};
+    
+    // Get missing parent IDs
+    const missingIds = parentIds.filter(id => !parentInfoMap[id]);
+    
+    if (missingIds.length === 0) {
+      return parentInfoMap;
+    }
+
+    // Fetch parents in parallel using chunks (Firestore 'in' query limit is 10)
+    const chunks = chunkArray(missingIds, 10);
+    const parentPromises = chunks.map(chunk => 
+      Promise.all(chunk.map(async (parentId) => {
+        try {
+          const parentDoc = await getDoc(doc(db, 'users', parentId));
+          if (parentDoc.exists()) {
+            const parentData = parentDoc.data();
+            return {
+              id: parentId,
+              info: {
+                uid: parentId,
+                email: parentData.email || '',
+                name: parentData.displayName || `${parentData.firstName || ''} ${parentData.lastName || ''}`.trim() || parentData.email || 'Rodzic'
+              }
+            };
+          }
+        } catch (error) {
+          console.error(`Error fetching parent ${parentId}:`, error);
+        }
+        return null;
+      }))
+    );
+
+    const results = await Promise.all(parentPromises);
+    results.flat().forEach(result => {
+      if (result) {
+        parentInfoMap[result.id] = result.info;
+      }
+    });
+
+    // Cache the updated parent info
+    setSessionCache(cacheKey, parentInfoMap);
+    
+    return parentInfoMap;
+  }, []);
+
+  // Memoized function to process messages
+  const processMessages = useCallback((allMessages: ParentMessage[]): ParentMessage[] => {
+    // Remove duplicates
+    const uniqueMessages = allMessages.filter((msg, index, self) =>
+      index === self.findIndex(m => m.id === msg.id)
+    );
+    
+    // Group messages into conversations
+    const conversations = new Map<string, ParentMessage>();
+    
+    uniqueMessages.forEach(msg => {
+      if (msg.from !== user?.uid && !msg.isReply && !msg.originalMessageId) {
+        const conversationKey = msg.from;
+        if (!conversations.has(conversationKey)) {
+          conversations.set(conversationKey, msg);
+        } else {
+          const existing = conversations.get(conversationKey)!;
+          const existingTime = existing.timestamp?.toDate?.() || new Date(existing.timestamp);
+          const msgTime = msg.timestamp?.toDate?.() || new Date(msg.timestamp);
+          if (msgTime < existingTime) {
+            conversations.set(conversationKey, msg);
+          }
+        }
+      }
+    });
+    
+    // Get latest message from each conversation
+    const conversationList: ParentMessage[] = [];
+    conversations.forEach((firstMessage, parentId) => {
+      const conversationMsgs = uniqueMessages.filter(m => 
+        (m.from === parentId && m.to === user?.uid) || 
+        (m.from === user?.uid && m.to === parentId)
+      );
+      const latestMessage = conversationMsgs.sort((a, b) => {
+        const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
+        const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
+        return bTime.getTime() - aTime.getTime();
+      })[0];
+      
+      if (latestMessage) {
+        conversationList.push(latestMessage);
+      }
+    });
+    
+    // Sort by latest message timestamp
+    conversationList.sort((a, b) => {
+      const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
+      const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
+      return bTime.getTime() - aTime.getTime();
+    });
+
+    return conversationList;
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -44,92 +197,29 @@ export default function TeacherMessagesPage() {
     const fetchMessages = async () => {
       try {
         setLoading(true);
-        const messagesRef = collection(db, 'messages');
         
-        // Pobierz wszystkie wiadomości gdzie nauczyciel jest odbiorcą LUB nadawcą (konwersacje)
-        const [receivedMessages, sentMessages] = await Promise.all([
-          getDocs(query(messagesRef, where('to', '==', user.uid))),
-          getDocs(query(messagesRef, where('from', '==', user.uid)))
-        ]);
-        
-        const allMessages = [
-          ...receivedMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage)),
-          ...sentMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage))
-        ];
-        
-        // Usuń duplikaty i posortuj
-        const uniqueMessages = allMessages.filter((msg, index, self) =>
-          index === self.findIndex(m => m.id === msg.id)
-        );
-        
-        // Grupuj wiadomości w konwersacje - znajdź pierwszą wiadomość od każdego rodzica
-        const conversations = new Map<string, ParentMessage>();
-        
-        uniqueMessages.forEach(msg => {
-          // Jeśli to pierwsza wiadomość od rodzica (nie jest odpowiedzią)
-          if (msg.from !== user.uid && !msg.isReply && !msg.originalMessageId) {
-            const conversationKey = msg.from;
-            if (!conversations.has(conversationKey)) {
-              conversations.set(conversationKey, msg);
-            } else {
-              // Jeśli istnieje już konwersacja, sprawdź która jest starsza
-              const existing = conversations.get(conversationKey)!;
-              const existingTime = existing.timestamp?.toDate?.() || new Date(existing.timestamp);
-              const msgTime = msg.timestamp?.toDate?.() || new Date(msg.timestamp);
-              if (msgTime < existingTime) {
-                conversations.set(conversationKey, msg);
-              }
-            }
-          }
-        });
-        
-        // Pobierz najnowsze wiadomości z każdej konwersacji dla listy
-        const conversationList: ParentMessage[] = [];
-        conversations.forEach((firstMessage, parentId) => {
-          // Znajdź najnowszą wiadomość w tej konwersacji
-          const conversationMsgs = uniqueMessages.filter(m => 
-            (m.from === parentId && m.to === user.uid) || 
-            (m.from === user.uid && m.to === parentId)
-          );
-          const latestMessage = conversationMsgs.sort((a, b) => {
-            const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-            const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-            return bTime.getTime() - aTime.getTime();
-          })[0];
+        await measureAsync('TeacherMessages:fetchMessages', async () => {
+          const messagesRef = collection(db, 'messages');
           
-          conversationList.push(latestMessage);
+          // Fetch messages in parallel with limit
+          const [receivedMessages, sentMessages] = await Promise.all([
+            getDocs(query(messagesRef, where('to', '==', user.uid), limit(100))),
+            getDocs(query(messagesRef, where('from', '==', user.uid), limit(100)))
+          ]);
+          
+          const allMessages = [
+            ...receivedMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage)),
+            ...sentMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage))
+          ];
+          
+          const conversationList = processMessages(allMessages);
+          setMessages(conversationList);
+
+          // Fetch parent info in parallel (fix N+1)
+          const parentIds = [...new Set(allMessages.filter(m => m.from !== user.uid).map(m => m.from))];
+          const parentInfoMap = await fetchParentInfo(parentIds);
+          setParentInfo(parentInfoMap);
         });
-        
-        // Posortuj listę konwersacji po najnowszej wiadomości
-        conversationList.sort((a, b) => {
-          const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-          const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-          return bTime.getTime() - aTime.getTime();
-        });
-
-        setMessages(conversationList);
-
-        // Pobierz informacje o rodzicach - z wszystkich wiadomości (nie tylko z conversationList)
-        const parentIds = [...new Set(uniqueMessages.filter(m => m.from !== user.uid).map(m => m.from))];
-        const parentInfoMap: {[key: string]: ParentInfo} = {};
-
-        for (const parentId of parentIds) {
-          try {
-            const parentDoc = await getDoc(doc(db, 'users', parentId));
-            if (parentDoc.exists()) {
-              const parentData = parentDoc.data();
-              parentInfoMap[parentId] = {
-                uid: parentId,
-                email: parentData.email || '',
-                name: parentData.displayName || `${parentData.firstName || ''} ${parentData.lastName || ''}`.trim() || parentData.email || 'Rodzic'
-              };
-            }
-          } catch (error) {
-            console.error(`Error fetching parent ${parentId}:`, error);
-          }
-        }
-
-        setParentInfo(parentInfoMap);
       } catch (error) {
         console.error('Error fetching messages:', error);
       } finally {
@@ -139,20 +229,17 @@ export default function TeacherMessagesPage() {
 
     fetchMessages();
     
-    // Odświeżaj wiadomości co 5 sekund
-    const interval = setInterval(fetchMessages, 5000);
+    // Refresh messages every 30 seconds (reduced from 5s)
+    const interval = setInterval(fetchMessages, 30000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, processMessages, fetchParentInfo]);
   
-  // Odświeżaj konwersację gdy jest wybrana
-  useEffect(() => {
-    if (!selectedMessage || !user) return;
-    
-    const refreshConversation = async () => {
-      const parentId = selectedMessage.from === user.uid ? selectedMessage.to : selectedMessage.from;
+  // Refresh conversation when selected (with caching)
+  const refreshConversation = useCallback(async (parentId: string) => {
+    await measureAsync('TeacherMessages:refreshConversation', async () => {
       const [receivedMessages, sentMessages] = await Promise.all([
-        getDocs(query(collection(db, 'messages'), where('from', '==', parentId), where('to', '==', user.uid))),
-        getDocs(query(collection(db, 'messages'), where('from', '==', user.uid), where('to', '==', parentId)))
+        getDocs(query(collection(db, 'messages'), where('from', '==', parentId), where('to', '==', user?.uid), limit(100))),
+        getDocs(query(collection(db, 'messages'), where('from', '==', user?.uid), where('to', '==', parentId), limit(100)))
       ]);
       
       const allConvMessages = [
@@ -171,12 +258,19 @@ export default function TeacherMessagesPage() {
       });
       
       setConversationMessages(uniqueConvMessages);
-    };
+    });
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!selectedMessage || !user) return;
     
-    refreshConversation();
-    const interval = setInterval(refreshConversation, 5000);
+    const parentId = selectedMessage.from === user.uid ? selectedMessage.to : selectedMessage.from;
+    refreshConversation(parentId);
+    
+    // Refresh conversation every 30 seconds (reduced from 5s)
+    const interval = setInterval(() => refreshConversation(parentId), 30000);
     return () => clearInterval(interval);
-  }, [selectedMessage, user]);
+  }, [selectedMessage, user, refreshConversation]);
 
   const sendReply = async () => {
     if (!replyContent.trim() || !selectedMessage || !user) return;
@@ -222,33 +316,14 @@ export default function TeacherMessagesPage() {
 
       setReplyContent('');
       
-      // Odśwież konwersację
-      const [receivedMessages, sentMessages] = await Promise.all([
-        getDocs(query(collection(db, 'messages'), where('from', '==', parentId), where('to', '==', user.uid))),
-        getDocs(query(collection(db, 'messages'), where('from', '==', user.uid), where('to', '==', parentId)))
-      ]);
+      // Refresh conversation and message list
+      await refreshConversation(parentId);
       
-      const allConvMessages = [
-        ...receivedMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage)),
-        ...sentMessages.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage))
-      ];
-      
-      const uniqueConvMessages = allConvMessages.filter((msg, index, self) =>
-        index === self.findIndex(m => m.id === msg.id)
-      );
-      
-      uniqueConvMessages.sort((a, b) => {
-        const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-        const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-        return aTime.getTime() - bTime.getTime();
-      });
-      
-      setConversationMessages(uniqueConvMessages);
-      
-      // Odśwież listę konwersacji
+      // Refresh message list (simplified - reuse fetchMessages logic)
+      const messagesRef = collection(db, 'messages');
       const [allReceived, allSent] = await Promise.all([
-        getDocs(query(collection(db, 'messages'), where('to', '==', user.uid))),
-        getDocs(query(collection(db, 'messages'), where('from', '==', user.uid)))
+        getDocs(query(messagesRef, where('to', '==', user.uid), limit(100))),
+        getDocs(query(messagesRef, where('from', '==', user.uid), limit(100)))
       ]);
       
       const allMessages = [
@@ -256,47 +331,7 @@ export default function TeacherMessagesPage() {
         ...allSent.docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage))
       ];
       
-      const uniqueMessages = allMessages.filter((msg, index, self) =>
-        index === self.findIndex(m => m.id === msg.id)
-      );
-      
-      const conversations = new Map<string, ParentMessage>();
-      uniqueMessages.forEach(msg => {
-        if (msg.from !== user.uid && !msg.isReply && !msg.originalMessageId) {
-          const conversationKey = msg.from;
-          if (!conversations.has(conversationKey)) {
-            conversations.set(conversationKey, msg);
-          } else {
-            const existing = conversations.get(conversationKey)!;
-            const existingTime = existing.timestamp?.toDate?.() || new Date(existing.timestamp);
-            const msgTime = msg.timestamp?.toDate?.() || new Date(msg.timestamp);
-            if (msgTime < existingTime) {
-              conversations.set(conversationKey, msg);
-            }
-          }
-        }
-      });
-      
-      const conversationList: ParentMessage[] = [];
-      conversations.forEach((firstMessage, parentId) => {
-        const conversationMsgs = uniqueMessages.filter(m => 
-          (m.from === parentId && m.to === user.uid) || 
-          (m.from === user.uid && m.to === parentId)
-        );
-        const latestMessage = conversationMsgs.sort((a, b) => {
-          const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-          const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-          return bTime.getTime() - aTime.getTime();
-        })[0];
-        conversationList.push(latestMessage);
-      });
-      
-      conversationList.sort((a, b) => {
-        const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-        const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-        return bTime.getTime() - aTime.getTime();
-      });
-      
+      const conversationList = processMessages(allMessages);
       setMessages(conversationList);
     } catch (error) {
       console.error('Error sending reply:', error);
@@ -320,8 +355,17 @@ export default function TeacherMessagesPage() {
     }
   };
 
-  const unreadCount = messages.filter(m => !m.read).length;
-  const parent = selectedMessage ? parentInfo[selectedMessage.from] : null;
+  // Memoized pagination
+  const paginatedMessages = useMemo(() => {
+    const startIndex = (currentPage - 1) * messagesPerPage;
+    const endIndex = startIndex + messagesPerPage;
+    return messages.slice(startIndex, endIndex);
+  }, [messages, currentPage, messagesPerPage]);
+
+  const totalPages = useMemo(() => Math.ceil(messages.length / messagesPerPage), [messages.length, messagesPerPage]);
+
+  const unreadCount = useMemo(() => messages.filter(m => !m.read).length, [messages]);
+  const parent = useMemo(() => selectedMessage ? parentInfo[selectedMessage.from] : null, [selectedMessage, parentInfo]);
 
   if (loading) {
     return (
@@ -332,8 +376,9 @@ export default function TeacherMessagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Wiadomości od rodziców
@@ -346,8 +391,9 @@ export default function TeacherMessagesPage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-200px)]">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Lista wiadomości */}
           <div className="bg-white rounded-xl shadow-lg border border-white/20 overflow-hidden flex flex-col">
             <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
@@ -360,8 +406,9 @@ export default function TeacherMessagesPage() {
                   <p>Brak wiadomości od rodziców</p>
                 </div>
               ) : (
-                <div className="divide-y divide-gray-200">
-                  {messages.map((message) => {
+                <>
+                  <div className="divide-y divide-gray-200">
+                    {paginatedMessages.map((message) => {
                     const parent = parentInfo[message.from];
                     return (
                       <button
@@ -372,30 +419,9 @@ export default function TeacherMessagesPage() {
                             markAsRead(message.id);
                           }
                           
-                          // Pobierz wszystkie wiadomości w konwersacji
+                          // Pobierz wszystkie wiadomości w konwersacji (użyj cached funkcji)
                           const parentId = message.from === user?.uid ? message.to : message.from;
-                          const conversationMsgs = await Promise.all([
-                            getDocs(query(collection(db, 'messages'), where('from', '==', parentId), where('to', '==', user?.uid))),
-                            getDocs(query(collection(db, 'messages'), where('from', '==', user?.uid), where('to', '==', parentId)))
-                          ]);
-                          
-                          const allConvMessages = [
-                            ...conversationMsgs[0].docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage)),
-                            ...conversationMsgs[1].docs.map(doc => ({ id: doc.id, ...doc.data() } as ParentMessage))
-                          ];
-                          
-                          // Usuń duplikaty i posortuj chronologicznie
-                          const uniqueConvMessages = allConvMessages.filter((msg, index, self) =>
-                            index === self.findIndex(m => m.id === msg.id)
-                          );
-                          
-                          uniqueConvMessages.sort((a, b) => {
-                            const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp);
-                            const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp);
-                            return aTime.getTime() - bTime.getTime(); // Najstarsze na górze
-                          });
-                          
-                          setConversationMessages(uniqueConvMessages);
+                          await refreshConversation(parentId);
                         }}
                         className={`w-full p-4 text-left hover:bg-gray-50 transition-colors ${
                           selectedMessage?.id === message.id ? 'bg-blue-50 border-l-4 border-blue-600' : ''
@@ -432,8 +458,32 @@ export default function TeacherMessagesPage() {
                         </div>
                       </button>
                     );
-                  })}
-                </div>
+                    })}
+                  </div>
+                  
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Poprzednia
+                      </button>
+                      <span className="text-sm text-gray-600">
+                        Strona {currentPage} z {totalPages}
+                      </span>
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Następna
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

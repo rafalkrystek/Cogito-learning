@@ -468,9 +468,9 @@ export default function TeacherGradesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header - pełna szerokość */}
-      <div className="w-full bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - pełna szerokość - Fixed */}
+      <div className="w-full bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm flex-shrink-0">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
           <button
@@ -498,8 +498,8 @@ export default function TeacherGradesPage() {
         </div>
       </div>
 
-      {/* Główny kontener - pełna szerokość */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+      {/* Główny kontener - pełna szerokość - Scrollable */}
+      <div className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-8 min-h-0">
         {/* User Profile Section - pełna szerokość */}
         <div className="w-full bg-white rounded-2xl shadow-lg p-6 mb-8 border border-white/20">
           <div className="flex items-center gap-6">

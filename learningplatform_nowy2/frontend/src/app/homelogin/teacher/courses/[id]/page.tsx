@@ -381,12 +381,10 @@ function TeacherCourseDetailContent() {
             try {
               const response = await fetch(block.videoUrl);
               if (!response.ok) {
-                console.warn(`Blob URL expired for video: ${block.title}. Skipping upload.`);
                 return { ...block, videoUrl: undefined };
               }
               const blob = await response.blob();
               if (blob.size === 0) {
-                console.warn(`Empty blob for video: ${block.title}. Skipping upload.`);
                 return { ...block, videoUrl: undefined };
               }
               const fileName = block.title || `video_${Date.now()}`;
@@ -402,11 +400,8 @@ function TeacherCourseDetailContent() {
               });
               
               const firebaseUrl = await getDownloadURL(storageRef);
-              console.log('Uploaded video URL:', firebaseUrl);
               return { ...block, videoUrl: firebaseUrl };
-            } catch (error) {
-              console.error('Error uploading video:', error);
-              console.warn(`Skipping video upload for: ${block.title} due to error`);
+            } catch {
               return { ...block, videoUrl: undefined };
             }
           }
@@ -416,13 +411,11 @@ function TeacherCourseDetailContent() {
             try {
               const response = await fetch(block.fileUrl);
               if (!response.ok) {
-                console.warn(`Blob URL expired for file: ${block.title}. Skipping upload.`);
                 // Blob URL wygasł - usuń nieważny URL i zwróć blok bez pliku
                 return { ...block, fileUrl: undefined };
               }
               const blob = await response.blob();
               if (blob.size === 0) {
-                console.warn(`Empty blob for file: ${block.title}. Skipping upload.`);
                 return { ...block, fileUrl: undefined };
               }
               const fileName = block.title || `file_${Date.now()}`;
@@ -439,8 +432,7 @@ function TeacherCourseDetailContent() {
               
               const firebaseUrl = await getDownloadURL(storageRef);
               return { ...block, fileUrl: firebaseUrl };
-            } catch (error) {
-              console.error('Error uploading file:', error);
+            } catch {
               // Nie pokazuj alertu, po prostu pomiń ten plik
               console.warn(`Skipping file upload for: ${block.title} due to error`);
               return { ...block, fileUrl: undefined };
@@ -491,9 +483,8 @@ function TeacherCourseDetailContent() {
       });
       
       alert('Treść lekcji zapisana pomyślnie!');
-    } catch (error) {
-      console.error('Error saving lesson content:', error);
-      alert('Błąd podczas zapisywania treści lekcji: ' + (error instanceof Error ? error.message : 'Nieznany błąd'));
+    } catch {
+      alert('Błąd podczas zapisywania treści lekcji');
     } finally {
       setSavingLesson(false);
     }
@@ -524,15 +515,11 @@ function TeacherCourseDetailContent() {
   };
 
   const openQuizPreview = (quizId: string) => {
-    console.log('openQuizPreview called with quizId:', quizId);
-    console.log('Available quizzes:', quizzes);
     const quiz = quizzes.find(q => q.id === quizId);
-    console.log('Found quiz:', quiz);
     if (quiz) {
       setPreviewQuiz(quiz);
       setShowQuizPreview(true);
     } else {
-      console.error('Quiz not found with ID:', quizId);
       // Spróbuj załadować quizy ponownie
       fetchQuizzes();
     }
@@ -596,9 +583,7 @@ function TeacherCourseDetailContent() {
           .filter(Boolean) as Student[];
         
         setStudents(studentsList);
-        console.log('Fetched students with classes:', studentsList);
-      } catch (error) {
-        console.error('Error fetching students:', error);
+      } catch {
         setStudents([]);
       }
     };
@@ -610,7 +595,6 @@ function TeacherCourseDetailContent() {
     const fetchAssigned = async () => {
       if (!courseId) return;
       
-      console.log('Fetching assigned users from Firestore for courseId:', courseId);
       
       try {
         // Pobierz kurs z Firestore
@@ -618,11 +602,9 @@ function TeacherCourseDetailContent() {
         
         if (courseDoc.exists()) {
           const courseData = courseDoc.data();
-          console.log('Course data from Firestore:', courseData);
           
           // Pobierz przypisanych użytkowników z Firestore
           const assignedUsersFromFirestore = courseData.assignedUsers || [];
-          console.log('Raw assignedUsers from Firestore:', assignedUsersFromFirestore);
           
           // Pobierz pełne dane użytkowników z kolekcji "users"
           const assignedUsersList = await Promise.all(
@@ -661,8 +643,7 @@ function TeacherCourseDetailContent() {
                     is_active: true
                   };
                 }
-              } catch (error) {
-                console.error('Error fetching user data for:', userIdentifier, error);
+              } catch {
                 // Fallback
                 return {
                   uid: userIdentifier,
@@ -675,14 +656,11 @@ function TeacherCourseDetailContent() {
             })
           );
           
-          console.log('Assigned users mapped from Firestore:', assignedUsersList);
           setAssignedUsers(assignedUsersList);
         } else {
-          console.log('Course document does not exist in Firestore');
           setAssignedUsers([]);
         }
-      } catch (error) {
-        console.error('Error fetching assigned users from Firestore:', error);
+      } catch {
         setAssignedUsers([]);
       }
     };
@@ -695,8 +673,6 @@ function TeacherCourseDetailContent() {
       if (!courseId || !(course as any)?.assignedClasses?.length) return;
       
       try {
-        console.log('Synchronizacja uczniów z klas dla kursu:', courseId);
-        console.log('Przypisane klasy:', (course as any).assignedClasses);
         
         // Pobierz wszystkich uczniów z przypisanych klas
         const studentsFromClasses = new Set<string>();
@@ -711,7 +687,6 @@ function TeacherCourseDetailContent() {
             classStudents.forEach((studentId: string) => {
               studentsFromClasses.add(studentId);
             });
-            console.log(`Klasa ${classId} ma ${classStudents.length} uczniów`);
           }
         }
         
@@ -739,14 +714,12 @@ function TeacherCourseDetailContent() {
               updated_at: new Date().toISOString()
             });
             
-            console.log(`Dodano ${newStudentsAdded} uczniów z klas do kursu`);
             
             // Odśwież listę przypisanych uczniów
             window.location.reload(); // Proste odświeżenie - może być optymalizowane
           }
         }
-      } catch (error) {
-        console.error('Błąd synchronizacji uczniów z klas:', error);
+      } catch {
       }
     };
     
@@ -762,7 +735,6 @@ function TeacherCourseDetailContent() {
       setLoadingQuizzes(true);
       setQuizError(null);
       
-      console.log('Fetching all quizzes');
       const quizzesCollection = collection(db, 'quizzes');
       const quizzesSnapshot = await getDocs(quizzesCollection);
       
@@ -773,8 +745,7 @@ function TeacherCourseDetailContent() {
       
       console.log('Found all quizzes:', quizzesList);
       setQuizzes(quizzesList);
-    } catch (error) {
-      console.error('Error fetching quizzes:', error);
+    } catch {
       setQuizError('Nie udało się załadować quizów');
     } finally {
       setLoadingQuizzes(false);
@@ -822,8 +793,7 @@ function TeacherCourseDetailContent() {
       
       // Wyczyść komunikat po 3 sekundach
       setTimeout(() => setSuccess(null), 3000);
-    } catch (error) {
-      console.error('Error removing student:', error);
+    } catch {
       setError('Błąd podczas usuwania ucznia z kursu');
     }
   };
@@ -896,8 +866,7 @@ function TeacherCourseDetailContent() {
                   is_active: true
                 };
               }
-            } catch (error) {
-              console.error('Error fetching user data for:', userIdentifier, error);
+            } catch {
               return {
                 uid: userIdentifier,
                 displayName: userIdentifier.includes('@') ? userIdentifier.split('@')[0] : userIdentifier,
@@ -915,8 +884,7 @@ function TeacherCourseDetailContent() {
           setSuccess(null);
         }, 3000);
       }
-    } catch (error) {
-      console.error('Error adding student:', error);
+    } catch {
       setError('Błąd podczas dodawania ucznia do kursu');
     }
   };
@@ -927,11 +895,9 @@ function TeacherCourseDetailContent() {
     const fetchFirestoreCourse = async () => {
       setLoading(true);
       try {
-        console.log('Fetching course from Firestore for courseId:', courseId);
         const courseDoc = await getDoc(doc(db, "courses", String(courseId)));
         if (courseDoc.exists()) {
           const data = courseDoc.data();
-          console.log('Course data loaded from Firestore:', data);
           setCourse(data as Course);
           setSections(data.sections || []);
           setBannerUrl(data.bannerUrl || "");
@@ -943,16 +909,12 @@ function TeacherCourseDetailContent() {
           sectionsData.forEach((section: Section) => {
             if (section.contents && Array.isArray(section.contents)) {
               initialSectionContents[Number(section.id)] = section.contents;
-              console.log(`Section ${section.id} contents loaded:`, section.contents);
             }
           });
           setSectionContents(initialSectionContents);
-          console.log('Initial sectionContents set:', initialSectionContents);
         } else {
-          console.log('Course document does not exist in Firestore');
         }
-      } catch (err) {
-        console.error('Error fetching course from Firestore:', err);
+      } catch {
         setError("Failed to load course details from Firestore");
       } finally {
         setLoading(false);
@@ -1049,7 +1011,6 @@ function TeacherCourseDetailContent() {
       setSectionContents(updatedSectionContents);
       console.log('Updated sectionContents:', updatedSectionContents);
     } else {
-      console.log('Course document does not exist in Firestore');
     }
   }, [courseId]);
 
@@ -1102,8 +1063,7 @@ function TeacherCourseDetailContent() {
       setCourse(prev => prev ? { ...prev, iconUrl: selectedIconUrl } : null);
       console.log('Icon URL saved to Firestore:', selectedIconUrl);
       setShowIconPicker(false);
-    } catch (error) {
-      console.error('Error saving icon URL:', error);
+    } catch {
       setError('Błąd podczas zapisywania ikony kursu');
     }
   }, [courseId]);
@@ -1136,8 +1096,7 @@ function TeacherCourseDetailContent() {
           // Also update local course state
           setCourse(prev => prev ? { ...prev, bannerUrl: fileUrl } : null);
         }
-      } catch (error) {
-        console.error('Error uploading banner:', error);
+      } catch {
         alert('Błąd podczas uploadu banera');
       }
     }
@@ -1179,8 +1138,7 @@ function TeacherCourseDetailContent() {
       setIsEditingDescription(false);
       
       console.log('Course description and instructor name updated successfully');
-    } catch (error) {
-      console.error('Error updating course description:', error);
+    } catch {
       alert('Błąd podczas aktualizacji opisu kursu');
     }
   }, [courseId, editedDescription, editedInstructorName]);
@@ -1267,8 +1225,7 @@ function TeacherCourseDetailContent() {
         await saveSectionsToFirestore(courseId, updatedSections);
         await refreshCourseData();
       }
-    } catch (error) {
-      console.error('Error saving section description:', error);
+    } catch {
       alert('Błąd podczas zapisywania opisu i plików');
     } finally {
       setUploadingFiles(false);
@@ -1405,8 +1362,8 @@ function TeacherCourseDetailContent() {
       
       console.log('Calendar event created successfully with ID:', docRef.id);
       console.log('Calendar event created for section:', section.name);
-    } catch (error) {
-      console.error('Error creating calendar event:', error);
+    } catch {
+      // Ignore
     }
   }, []);
 
@@ -1765,10 +1722,8 @@ function TeacherCourseDetailContent() {
         
         console.log('Material saved to Firestore:', newMaterialData);
         console.log('Updated sections:', newSections);
-      } catch (error) {
-        console.error('❌ Error saving to Firestore:', error);
-        console.error('Error details:', error);
-        alert(`Błąd podczas zapisywania materiału: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {
+        alert('Błąd podczas zapisywania materiału');
         return;
       }
       await refreshCourseData();
@@ -1874,8 +1829,7 @@ function TeacherCourseDetailContent() {
         // Ukryj komunikat sukcesu po 3 sekundach
         setTimeout(() => setSuccess(null), 3000);
       }
-    } catch (error) {
-      console.error('Error saving sections order:', error);
+    } catch {
       setError('Błąd podczas zapisywania kolejności sekcji');
     } finally {
       setIsSavingOrder(false);

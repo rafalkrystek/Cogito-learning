@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { ArrowLeft, MessageCircle, Phone, Mail, Clock, Star, User, AlertCircle, Award, Calendar } from 'lucide-react';
-import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { useAuth } from '../../../../context/AuthContext';
 import { measureAsync } from '@/utils/perf';
@@ -127,9 +127,9 @@ function StudentTutorsPageContent() {
               const tutorData = tutorSnap.data();
               
               // Użyj statystyk z dokumentu (szybsze) - obliczanie statystyk jest bardzo ciężkie
-              let activeCourses = tutorData.activeCourses || 0;
-              let totalStudents = tutorData.totalStudents || 0;
-              let averageRating = tutorData.averageRating || 0;
+              const activeCourses = tutorData.activeCourses || 0;
+              const totalStudents = tutorData.totalStudents || 0;
+              const averageRating = tutorData.averageRating || 0;
               
               // OPTYMALIZACJA: Pomiń obliczanie statystyk - używaj tylko z dokumentu
               // Jeśli statystyki nie są dostępne, użyj domyślnych wartości

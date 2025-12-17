@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -140,11 +140,11 @@ export default function TeacherProfilePage() {
       
       // Użyj statystyk z dokumentu (szybsze)
       let activeCourses = teacherData.activeCourses || 0;
-      let totalStudents = teacherData.totalStudents || 0;
-      let averageRating = teacherData.averageRating || 0;
+      const totalStudents = teacherData.totalStudents || 0;
+      const averageRating = teacherData.averageRating || 0;
       
       // Pobierz kursy nauczyciela równolegle (tylko raz!)
-      const { teacherCourses, coursesMap, totalLessons } = await measureAsync('StudentTeacherProfile:fetchCourses', async () => {
+      const { teacherCourses, totalLessons } = await measureAsync('StudentTeacherProfile:fetchCourses', async () => {
         const coursesCollection = collection(db, 'courses');
         const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
           getDocs(query(coursesCollection, where('created_by', '==', teacherData.email))),
@@ -183,7 +183,7 @@ export default function TeacherProfilePage() {
           thumbnail: course.thumbnail || ''
         }));
         
-        return { teacherCourses, coursesMap, totalLessons };
+        return { teacherCourses, totalLessons };
       });
       
       setCourses(teacherCourses);
@@ -192,8 +192,8 @@ export default function TeacherProfilePage() {
       // Obliczanie uczniów, ocen, aktywności jest bardzo ciężkie i nie jest potrzebne przy każdym ładowaniu
       
       // Pobierz dodatkowe dane dla odznak (uproszczone)
-      let totalGrades = teacherData.totalGrades || 0;
-      let activeDays = teacherData.activeDays || 0;
+      const totalGrades = teacherData.totalGrades || 0;
+      const activeDays = teacherData.activeDays || 0;
       
       // Oblicz odznaki
       const calculateLevel = (value: number, thresholds: number[]): number => {

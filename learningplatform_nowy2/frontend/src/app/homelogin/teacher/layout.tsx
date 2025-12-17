@@ -141,7 +141,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   
   return (
     <TeacherRoute>
-      <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900 w-full max-w-none transition-colors duration-200 overflow-x-hidden">
+      <div className="flex h-screen bg-gray-50 dark:bg-gray-900 w-full max-w-none transition-colors duration-200 overflow-hidden">
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-sm">
           <div className="flex flex-col flex-1">

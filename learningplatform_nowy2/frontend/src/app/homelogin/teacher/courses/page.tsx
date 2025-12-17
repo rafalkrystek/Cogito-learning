@@ -656,9 +656,9 @@ export default function TeacherCourses() {
   }, [courses, searchTerm, courseTypeFilter, filterCourses]);
 
   return (
-    <div className="min-h-screen bg-blue-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-8 mb-8 shadow-xl">
+    <div className="h-screen bg-blue-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - Fixed */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-white/30 p-6 shadow-xl flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -687,11 +687,12 @@ export default function TeacherCourses() {
         </div>
       </div>
 
-      <div className="px-6">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 shadow-lg">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-6 py-4">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 shadow-lg flex-1 flex flex-col min-h-0">
           
-          {/* Stats and Search */}
-          <div className="mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
+          {/* Stats and Search - Fixed */}
+          <div className="mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-6">
               <div className="text-center">
                 <div className="text-2xl font-bold text-blue-600">{courses.length}</div>
@@ -794,7 +795,8 @@ export default function TeacherCourses() {
             <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-6">{error}</div>
           ) : (
             <>
-              <div className="max-h-[700px] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 mb-8 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+              {/* Courses Grid - Scrollable */}
+              <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 min-h-0">
                 {filteredCourses.map((course) => (
                   <div key={`${course.id}-${course.updated_at || course.created_at}`} className="bg-white/90 backdrop-blur-sm rounded-2xl border border-white/30 p-4 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 transform hover:-translate-y-1 group h-80 flex flex-col">
                     {/* Course Header */}

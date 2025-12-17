@@ -3,11 +3,49 @@
 // Force dynamic rendering to prevent SSR issues with client-side hooks
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useAuth } from '@/context/AuthContext';
 import { MessageSquare, Users, Clock, Send, Plus, FileText, Download } from 'lucide-react';
 import { db } from '@/config/firebase';
-import { collection, query, where, onSnapshot, getDocs, addDoc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, addDoc, serverTimestamp, orderBy, limit, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Helper to chunk array for Firestore 'in' queries (max 10 items)
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 // import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface GroupChat {
@@ -82,6 +120,8 @@ export default function GroupChatsPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [availableClasses, setAvailableClasses] = useState<Class[]>([]);
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const chatsPerPage = typeof window !== 'undefined' && window.innerWidth < 768 ? 10 : 20;
 
   // Pobierz czaty grupowe nauczyciela
   useEffect(() => {
@@ -171,84 +211,128 @@ export default function GroupChatsPage() {
     return () => unsubscribe();
   }, [user]);
 
-  // Pobierz dostępnych uczniów i klasy
-  useEffect(() => {
-    const fetchStudentsAndClasses = async () => {
-      try {
-        // Pobierz klasy nauczyciela
-        const classesQuery = query(
-          collection(db, 'classes'),
-          where('teacher_id', '==', user?.uid)
-        );
-        const classesSnapshot = await getDocs(classesQuery);
+  // Fetch students and classes with caching and optimization
+  const fetchStudentsAndClasses = useCallback(async () => {
+    if (!user?.uid || !user?.email) return;
+    
+    try {
+      await measureAsync('TeacherGroupChats:fetchStudentsAndClasses', async () => {
+        // Check cache
+        const cacheKey = `teacher_group_chats_data_${user.uid}`;
+        const cached = getSessionCache<{ classes: Class[]; students: User[] }>(cacheKey);
+        
+        if (cached) {
+          setAvailableClasses(cached.classes);
+          setAvailableStudents(cached.students);
+          return;
+        }
+
+        // Fetch classes and courses in parallel
+        const [classesSnapshot, createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
+          getDocs(query(collection(db, 'classes'), where('teacher_id', '==', user.uid), limit(50))),
+          getDocs(query(collection(db, 'courses'), where('created_by', '==', user.email), limit(100))),
+          getDocs(query(collection(db, 'courses'), where('teacherEmail', '==', user.email), limit(100)))
+        ]);
+        
         const classes: Class[] = classesSnapshot.docs
-          .map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          } as Class))
+          .map(doc => ({ id: doc.id, ...doc.data() } as Class))
           .filter(cls => cls.is_active);
         
         setAvailableClasses(classes);
-        console.log('Pobrano klasy nauczyciela:', classes);
 
-        // Pobierz kursy nauczyciela
-        const coursesSnapshot = await getDocs(collection(db, 'courses'));
-        const teacherCourses = coursesSnapshot.docs.filter(doc => {
-          const data = doc.data();
-          return data.created_by === user?.email || 
-                 data.teacherEmail === user?.email ||
-                 (Array.isArray(data.assignedUsers) && data.assignedUsers.includes(user?.email));
+        // Combine courses
+        const coursesMap = new Map<string, any>();
+        createdBySnapshot.docs.forEach(doc => {
+          coursesMap.set(doc.id, doc.data());
+        });
+        teacherEmailSnapshot.docs.forEach(doc => {
+          if (!coursesMap.has(doc.id)) {
+            coursesMap.set(doc.id, doc.data());
+          }
         });
 
-        // Zbierz wszystkich uczniów z kursów nauczyciela
+        // Collect all student IDs from courses
         const allStudentIds = new Set<string>();
-        const usersSnapshot = await getDocs(collection(db, 'users'));
+        const allStudentEmails = new Set<string>();
         
-        for (const courseDoc of teacherCourses) {
-          const courseData = courseDoc.data();
+        coursesMap.forEach(courseData => {
           const assignedUsers = courseData.assignedUsers || [];
-          
           assignedUsers.forEach((userId: string) => {
-            const isEmail = userId.includes('@');
-            const userDoc = usersSnapshot.docs.find(doc => {
-              const userData = doc.data();
-              return isEmail ? userData.email === userId : userData.uid === userId;
-            });
-            
-            if (userDoc) {
-              const userData = userDoc.data();
-              if (userData.role === 'student') {
-                allStudentIds.add(userData.uid);
-              }
+            if (userId.includes('@')) {
+              allStudentEmails.add(userId);
+            } else {
+              allStudentIds.add(userId);
             }
           });
-        }
+        });
 
-        // Konwertuj na User objects
-        const students: User[] = [];
-        for (const studentId of allStudentIds) {
-          const userDoc = usersSnapshot.docs.find(doc => doc.data().uid === studentId);
-          if (userDoc) {
-            const userData = userDoc.data();
-            students.push({
-              uid: userData.uid,
-              email: userData.email,
-              displayName: userData.displayName || userData.email,
-              role: userData.role
-            });
-          }
+        // Fetch students in parallel using chunks
+        const studentIdsArray = Array.from(allStudentIds);
+        const studentEmailsArray = Array.from(allStudentEmails);
+        
+        const studentPromises: Promise<any>[] = [];
+        
+        // Fetch by UID (chunked)
+        if (studentIdsArray.length > 0) {
+          const chunks = chunkArray(studentIdsArray, 10);
+          chunks.forEach(chunk => {
+            studentPromises.push(
+              getDocs(query(collection(db, 'users'), where('uid', 'in', chunk), where('role', '==', 'student')))
+            );
+          });
         }
+        
+        // Fetch by email (chunked)
+        if (studentEmailsArray.length > 0) {
+          const chunks = chunkArray(studentEmailsArray, 10);
+          chunks.forEach(chunk => {
+            studentPromises.push(
+              getDocs(query(collection(db, 'users'), where('email', 'in', chunk), where('role', '==', 'student')))
+            );
+          });
+        }
+        
+        const studentSnapshots = await Promise.all(studentPromises);
+        
+        const studentsMap = new Map<string, User>();
+        studentSnapshots.forEach(snapshot => {
+          snapshot.docs.forEach((doc: QueryDocumentSnapshot<DocumentData>) => {
+            const userData = doc.data();
+            const uid = userData.uid || doc.id;
+            if (!studentsMap.has(uid)) {
+              studentsMap.set(uid, {
+                uid,
+                email: userData.email,
+                displayName: userData.displayName || userData.email,
+                role: userData.role
+              });
+            }
+          });
+        });
 
+        const students = Array.from(studentsMap.values());
         setAvailableStudents(students);
-      } catch (error) {
-        console.error('Error fetching students and classes:', error);
-      }
-    };
-
-    if (user && showCreateChat) {
-      fetchStudentsAndClasses();
+        
+        // Cache the data
+        setSessionCache(cacheKey, { classes, students });
+      });
+    } catch (error) {
+      console.error('Error fetching students and classes:', error);
     }
-  }, [user, showCreateChat]);
+  }, [user?.uid, user?.email]);
+
+  useEffect(() => {
+    fetchStudentsAndClasses();
+  }, [fetchStudentsAndClasses]);
+
+  // Memoized paginated chats
+  const paginatedChats = useMemo(() => {
+    const startIndex = (currentPage - 1) * chatsPerPage;
+    const endIndex = startIndex + chatsPerPage;
+    return chats.slice(startIndex, endIndex);
+  }, [chats, currentPage, chatsPerPage]);
+
+  const totalPages = useMemo(() => Math.ceil(chats.length / chatsPerPage), [chats.length, chatsPerPage]);
 
   // Pobierz wiadomości dla wybranego czatu
   useEffect(() => {
@@ -646,40 +730,65 @@ export default function GroupChatsPage() {
                   <p className="text-sm">Utwórz swój pierwszy czat!</p>
                 </div>
               ) : (
-                <div className="space-y-2 p-2">
-                  {chats.map((chat) => (
-                  <div
-                    key={chat.id}
-                    onClick={() => setSelectedChat(chat)}
-                    className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
-                      selectedChat?.id === chat.id ? 'bg-blue-50 border-l-4 border-l-blue-600' : ''
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-medium text-gray-900">{chat.name}</h4>
+                <>
+                  <div className="space-y-2 p-2">
+                    {paginatedChats.map((chat) => (
+                    <div
+                      key={chat.id}
+                      onClick={() => setSelectedChat(chat)}
+                      className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
+                        selectedChat?.id === chat.id ? 'bg-blue-50 border-l-4 border-l-blue-600' : ''
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <h4 className="font-medium text-gray-900">{chat.name}</h4>
+                      </div>
+                      <div className="flex items-center text-sm text-gray-500 mb-1">
+                        <Users className="h-3 w-3 mr-1" />
+                        {chat.participants.length} uczestników
+                      </div>
+                      {chat.lastMessage && (
+                        <>
+                          <div className="text-sm text-gray-600">
+                            <span className="font-medium">
+                              {chat.lastMessage.senderEmail || chat.lastMessage.senderName || 'Nieznany nadawca'}:
+                            </span>{' '}
+                            {chat.lastMessage.text.length > 40 
+                              ? chat.lastMessage.text.substring(0, 40) + '...' 
+                              : chat.lastMessage.text}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {formatTime(chat.lastMessage.createdAt)}
+                          </div>
+                        </>
+                      )}
                     </div>
-                    <div className="flex items-center text-sm text-gray-500 mb-1">
-                      <Users className="h-3 w-3 mr-1" />
-                      {chat.participants.length} uczestników
-                    </div>
-                    {chat.lastMessage && (
-                      <>
-                        <div className="text-sm text-gray-600">
-                          <span className="font-medium">
-                            {chat.lastMessage.senderEmail || chat.lastMessage.senderName || 'Nieznany nadawca'}:
-                          </span>{' '}
-                          {chat.lastMessage.text.length > 40 
-                            ? chat.lastMessage.text.substring(0, 40) + '...' 
-                            : chat.lastMessage.text}
-                        </div>
-                        <div className="text-xs text-gray-400 mt-1">
-                          {formatTime(chat.lastMessage.createdAt)}
-                        </div>
-                      </>
-                    )}
+                    ))}
                   </div>
-                  ))}
-                </div>
+                  
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Poprzednia
+                      </button>
+                      <span className="text-sm text-gray-600">
+                        Strona {currentPage} z {totalPages} ({chats.length} czatów)
+                      </span>
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Następna
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

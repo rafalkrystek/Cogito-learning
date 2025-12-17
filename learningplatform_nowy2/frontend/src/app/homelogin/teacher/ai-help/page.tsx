@@ -61,9 +61,9 @@ export default function AIHelpPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header z przyciskiem powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header z przyciskiem powrotu - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
@@ -81,16 +81,17 @@ export default function AIHelpPage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-        <div className="space-y-6">
-          {/* Header */}
-          <div>
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6 min-h-0">
+        <div className="space-y-6 flex-1 flex flex-col min-h-0">
+          {/* Header - Fixed */}
+          <div className="flex-shrink-0">
             <h2 className="text-2xl font-bold text-gray-900">Pomoc AI</h2>
             <p className="text-gray-600">Asystent AI dla nauczycieli</p>
           </div>
 
-      {/* Main Chat Interface */}
-      <div className="bg-white rounded-lg border border-gray-200 h-[calc(100vh-250px)] flex flex-col">
+      {/* Main Chat Interface - Scrollable */}
+      <div className="bg-white rounded-lg border border-gray-200 flex-1 flex flex-col min-h-0">
         {/* Chat Header */}
         <div className="p-4 border-b border-gray-200 bg-gray-50">
           <div className="flex items-center gap-2">

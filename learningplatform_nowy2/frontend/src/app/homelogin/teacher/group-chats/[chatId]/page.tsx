@@ -420,9 +420,9 @@ export default function GroupChatView() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header z przyciskiem powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header z przyciskiem powrotu - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
@@ -440,35 +440,32 @@ export default function GroupChatView() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6 min-h-0">
+        <div className="space-y-6 flex-1 flex flex-col min-h-0">
+          {/* Header - Fixed */}
+          <div className="flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">{chatName}</h2>
                 <p className="text-gray-600">{participants.length} uczestników</p>
               </div>
             </div>
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">{chatName}</h2>
-            <p className="text-gray-600">{participants.length} uczestników</p>
+            {isTeacher && (
+              <button
+                onClick={() => setShowManageParticipants(!showManageParticipants)}
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Settings className="h-4 w-4" />
+                Zarządzaj
+              </button>
+            )}
           </div>
-        </div>
-        {isTeacher && (
-          <button
-            onClick={() => setShowManageParticipants(!showManageParticipants)}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Settings className="h-4 w-4" />
-            Zarządzaj
-          </button>
-        )}
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-250px)]">
-        {/* Chat Area */}
-        <div className="lg:col-span-3">
+          {/* Chat Area - Scrollable */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+            {/* Chat Area */}
+            <div className="lg:col-span-3">
           <div className="bg-white rounded-lg border border-gray-200 h-full flex flex-col">
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 messages-container">
@@ -579,10 +576,10 @@ export default function GroupChatView() {
               </div>
             </form>
           </div>
-        </div>
+            </div>
         
-        {/* Sidebar */}
-        <div className="lg:col-span-1">
+            {/* Sidebar */}
+            <div className="lg:col-span-1">
           <div className="bg-white rounded-lg border border-gray-200 h-full p-4">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -705,7 +702,8 @@ export default function GroupChatView() {
               )}
             </div>
           </div>
-        </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

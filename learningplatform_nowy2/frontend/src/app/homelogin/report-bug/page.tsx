@@ -1,6 +1,5 @@
 "use client";
 import { useState, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ArrowLeft, Send, AlertTriangle, CheckCircle, Bug, Info, FileText, Monitor, Globe, Zap } from 'lucide-react';
@@ -17,7 +16,6 @@ interface BugReport {
 }
 
 export default function ReportBugPage() {
-  const router = useRouter();
   const [formData, setFormData] = useState<BugReport>({
     category: '',
     description: '',
@@ -121,9 +119,6 @@ export default function ReportBugPage() {
     }
   }, [formData.url]);
 
-  const selectedCategory = useMemo(() => {
-    return categories.find(cat => cat.value === formData.category);
-  }, [formData.category, categories]);
 
   if (isSubmitted) {
     return (

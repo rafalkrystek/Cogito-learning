@@ -1,12 +1,41 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs, limit } from "firebase/firestore";
 import { db } from "@/config/firebase";
 import Providers from '@/components/Providers';
 import { CourseViewShared } from "@/components/CourseViewShared";
 import { ArrowLeft } from 'lucide-react';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function TeacherCoursePreviewContent() {
   const { user, loading: authLoading } = useAuth();
@@ -19,14 +48,29 @@ function TeacherCoursePreviewContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchCourseData = async () => {
-      if (!courseId || !user) return;
+  const fetchCourseData = useCallback(async () => {
+    if (!courseId || !user || authLoading) return;
 
-      setLoading(true);
-      try {
-        // Pobierz dane kursu
-        const courseDoc = await getDoc(doc(db, "courses", String(courseId)));
+    setLoading(true);
+    try {
+      await measureAsync('TeacherCoursePreview:fetchCourseData', async () => {
+        // Check cache
+        const cacheKey = `teacher_course_preview_${courseId}`;
+        const cached = getSessionCache<{ course: any; sections: any[]; quizzes: any[] }>(cacheKey);
+        
+        if (cached) {
+          setCourse(cached.course);
+          setSections(cached.sections);
+          setQuizzes(cached.quizzes);
+          setLoading(false);
+          return;
+        }
+
+        // Fetch course and quizzes in parallel
+        const [courseDoc, quizzesSnapshot] = await Promise.all([
+          getDoc(doc(db, "courses", String(courseId))),
+          getDocs(query(collection(db, "quizzes"), where("courseId", "==", String(courseId)), limit(50)))
+        ]);
         
         if (!courseDoc.exists()) {
           setError("Nie znaleziono kursu.");
@@ -36,40 +80,43 @@ function TeacherCoursePreviewContent() {
 
         const courseData = courseDoc.data();
         
-        // Sprawdź czy nauczyciel ma dostęp do tego kursu
+        // Check access
         if (user.role !== 'admin' && courseData.created_by !== user.email && courseData.teacherEmail !== user.email) {
           setError("Nie masz dostępu do tego kursu.");
           setLoading(false);
           return;
         }
 
-        setCourse(courseData);
-        setSections(courseData.sections || []);
-
-        // Pobierz quizy przypisane do tego kursu
-        const quizzesQuery = query(
-          collection(db, "quizzes"),
-          where("courseId", "==", String(courseId))
-        );
-        const quizzesSnapshot = await getDocs(quizzesQuery);
+        const sectionsData = courseData.sections || [];
         const quizzesData = quizzesSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
+
+        setCourse(courseData);
+        setSections(sectionsData);
         setQuizzes(quizzesData);
+        
+        // Cache the data
+        setSessionCache(cacheKey, {
+          course: courseData,
+          sections: sectionsData,
+          quizzes: quizzesData
+        });
+      });
+    } catch (err) {
+      console.error("Error fetching course:", err);
+      setError("Błąd podczas ładowania kursu.");
+    } finally {
+      setLoading(false);
+    }
+  }, [courseId, user, authLoading]);
 
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching course:", err);
-        setError("Błąd podczas ładowania kursu.");
-        setLoading(false);
-      }
-    };
-
+  useEffect(() => {
     if (!authLoading) {
       fetchCourseData();
     }
-  }, [courseId, user, authLoading]);
+  }, [fetchCourseData, authLoading]);
 
   if (authLoading || loading) {
     return (

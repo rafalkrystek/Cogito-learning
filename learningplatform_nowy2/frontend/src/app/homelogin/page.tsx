@@ -1077,8 +1077,8 @@ function Dashboard() {
         </button>
 
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 w-64 bg-white/90 backdrop-blur-xl border-r border-white/20 flex flex-col min-h-screen transition-transform duration-300 ease-in-out shadow-xl`} style={{height: '100vh'}}>
-        <div className="flex items-center gap-3 px-6 py-6 justify-between bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white rounded-br-2xl">
+      <aside className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed inset-y-0 left-0 z-40 w-64 bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-r border-white/20 dark:border-gray-700/50 flex flex-col h-screen transition-transform duration-300 ease-in-out shadow-xl`}>
+        <div className="flex items-center gap-3 px-6 py-6 justify-between bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white rounded-br-2xl flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
               <Image src="/puzzleicon.png" alt="Logo" width={24} height={24} className="w-6 h-6 brightness-0 dark:brightness-100" />
@@ -1086,7 +1086,7 @@ function Dashboard() {
             <span className="text-lg font-bold">COGITO</span>
           </div>
         </div>
-        <nav className="flex-1 px-4 py-6 space-y-2">
+        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto bg-white/90 dark:bg-gray-800/90">
           {sidebarLinks.map((item) => (
             <div key={item.label}>
               {item.href ? (
@@ -1128,7 +1128,7 @@ function Dashboard() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col w-full lg:w-auto bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200">
+      <main className="flex-1 flex flex-col w-full lg:ml-64 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200 min-h-screen">
         {/* Header */}
         <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 lg:px-8 py-4 sm:py-6 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-white/20 dark:border-gray-700/50 shadow-sm relative gap-3 sm:gap-4 transition-colors duration-200">
           <div className="relative w-full sm:w-[45%] md:w-[40%] lg:w-1/3 pl-12 sm:pl-0" ref={searchRef}>

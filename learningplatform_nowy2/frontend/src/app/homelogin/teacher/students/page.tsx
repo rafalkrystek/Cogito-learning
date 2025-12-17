@@ -79,174 +79,65 @@ export default function StudentsPage() {
   const fetchClassesCalledRef = useRef<string | null>(null);
   const fetchStudentsCalledRef = useRef<string | null>(null);
 
-  // 🆕 DEBUG - loguj zmiany stanu (tylko raz na zmianę, nie na każdy render)
-  useEffect(() => {
-    console.log('🔍🔍🔍 STATE DEBUG - START 🔍🔍🔍');
-    console.log('🔍 STATE DEBUG - showClassSelection:', showClassSelection);
-    console.log('🔍 STATE DEBUG - selectedClass:', selectedClass);
-    console.log('🔍 STATE DEBUG - selectedClass?.name:', selectedClass?.name);
-    console.log('🔍 STATE DEBUG - selectedClass?.id:', selectedClass?.id);
-    console.log('🔍 STATE DEBUG - classes.length:', classes.length);
-    console.log('🔍 STATE DEBUG - students.length:', students.length);
-    console.log('🔍 STATE DEBUG - loading:', loading);
-    console.log('🔍🔍🔍 STATE DEBUG - KONIEC 🔍🔍🔍');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showClassSelection, selectedClass?.id, classes.length, students.length, loading]);
 
   // 🆕 NOWA FUNKCJA - pobieranie klas
   const fetchClasses = useCallback(async () => {
     if (!user || !user.uid) {
-      console.error('❌ Brak użytkownika lub UID w fetchClasses');
       return;
     }
     
     // Zapobiegaj wielokrotnemu wywoływaniu - sprawdź PRZED ustawieniem flagi
     const callId = `${user.uid}-${Date.now()}`;
     if (fetchClassesCalledRef.current !== null) {
-      console.log('⚠️ fetchClasses - już wywołane, pomijam. Current flag:', fetchClassesCalledRef.current);
       return;
     }
     
     fetchClassesCalledRef.current = callId;
-    console.log('✅ fetchClasses - ustawiam flagę:', callId);
     
     try {
-      console.log('🔍 fetchClasses - START - pobieranie klas dla nauczyciela:', user.uid);
-      console.log('🔍 fetchClasses - user object:', user);
-      
       const classesRef = collection(db, 'classes');
-      console.log('🔍 fetchClasses - classesRef created:', classesRef);
-      
       const classesSnapshot = await getDocs(classesRef);
-      console.log('🔍 fetchClasses - pobrano dokumenty klas:', classesSnapshot.docs.length);
       
       // Loguj wszystkie klasy w bazie
       if (classesSnapshot.docs.length === 0) {
-        console.log('⚠️ fetchClasses - BRAK KLAS W BAZIE DANYCH!');
         setClasses([]);
         return;
       }
       
-      classesSnapshot.docs.forEach((doc, index) => {
-        const data = doc.data();
-        console.log(`📚 Klasa ${index + 1}:`, {
-          id: doc.id,
-          name: data.name || 'Brak nazwy',
-          teacher_id: data.teacher_id,
-          teacherId: data.teacherId, // Sprawdź też to pole
-          teacher_email: data.teacher_email,
-          is_active: data.is_active,
-          students: data.students, // 🆕 DODAJ STUDENTÓW
-          students_count: data.students ? data.students.length : 0, // 🆕 LICZBA STUDENTÓW
-          nauczyciel_uid: user.uid,
-          wszystkie_pola: data
-        });
-        
-        // 🆕 DODATKOWE LOGI - rozwiń szczegóły
-        console.log(`📚 Klasa ${index + 1} - SZCZEGÓŁY:`, data);
-        console.log(`📚 Klasa ${index + 1} - STUDENCI:`, data.students);
-        console.log(`📚 Klasa ${index + 1} - TEACHER_ID:`, data.teacher_id);
-        console.log(`📚 Klasa ${index + 1} - TEACHER_ID === USER_UID:`, data.teacher_id === user.uid);
-        
-        // 🆕 SPRAWDŹ WSZYSTKIE POLA Z NAUCZYCIELEM
-        console.log(`📚 Klasa ${index + 1} - WSZYSTKIE POLA NAUCZYCIELA:`, {
-          teacher_id: data.teacher_id,
-          teacher_email: data.teacher_email,
-          teacher_uid: data.teacher_uid,
-          prowadzacy: data.prowadzacy,
-          prowadzacy_id: data.prowadzacy_id,
-          prowadzacy_uid: data.prowadzacy_uid,
-          user_uid: user.uid
-        });
-      });
-      
-      // 🆕 DEBUG - pokaż WSZYSTKIE klasy przed filtrowaniem
-      console.log('🔍 WSZYSTKIE KLASY PRZED FILTROWANIEM:');
-      classesSnapshot.docs.forEach((doc, index) => {
-        const data = doc.data();
-        console.log(`📚 Klasa ${index + 1} - PRZED FILTREM:`, {
-          id: doc.id,
-          name: data.name,
-          teacher_id: data.teacher_id,
-          is_active: data.is_active,
-          students: data.students,
-          students_count: data.students ? data.students.length : 0,
-          user_uid: user.uid,
-          teacher_id_match: data.teacher_id === user.uid,
-          any_teacher_match: data.teacher_id === user.uid
-        });
-      });
 
       const classesData = classesSnapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Class))
         .filter(cls => {
           const isActive = cls.is_active !== false; // Domyślnie true jeśli nie ustawione
           const isTeacherClass = cls.teacher_id === user.uid; // Sprawdź tylko teacher_id
-          
-          console.log(`🔍 Sprawdzam klasę "${cls.name}":`, {
-            isActive,
-            isTeacherClass,
-            teacher_id: cls.teacher_id,
-            user_uid: user.uid,
-            students: cls.students,
-            students_count: cls.students ? cls.students.length : 0,
-            matches: isActive && isTeacherClass,
-            reason_rejected: !isActive ? 'nieaktywna' : !isTeacherClass ? 'nie należy do nauczyciela' : 'akceptowana'
-          });
-          
           return isActive && isTeacherClass;
         });
-      
-      console.log('🔍 fetchClasses - znalezione klasy dla nauczyciela:', classesData.length);
-      console.log('🔍 fetchClasses - klasy:', classesData);
-      
-      // 🆕 DEBUG - sprawdź puste klasy
-      const emptyClasses = classesData.filter(cls => !cls.students || cls.students.length === 0);
-      const classesWithStudents = classesData.filter(cls => cls.students && cls.students.length > 0);
-      console.log('🔍 Puste klasy:', emptyClasses.length, emptyClasses.map(c => c.name));
-      console.log('🔍 Klasy z uczniami:', classesWithStudents.length, classesWithStudents.map(c => `${c.name} (${c.students.length})`));
-      
-      // 🆕 DEBUG - sprawdź wszystkie klasy w bazie (nie tylko nauczyciela)
-      const allClassesInDb = classesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
-      const allEmptyClasses = allClassesInDb.filter(cls => !cls.students || cls.students.length === 0);
-      console.log('🔍 WSZYSTKIE PUSTE KLASY W BAZIE:', allEmptyClasses.length, allEmptyClasses.map(c => `${c.name} (teacher: ${c.teacher_id})`));
-      console.log('🔍 WSZYSTKIE KLASY W BAZIE:', allClassesInDb.length, allClassesInDb.map(c => `${c.name} (teacher: ${c.teacher_id}, students: ${c.students ? c.students.length : 0})`));
       
       setClasses(classesData);
       
       // Jeśli nauczyciel ma tylko jedną klasę, automatycznie ją wybierz
       if (classesData.length === 1) {
-        console.log('🔍 fetchClasses - automatyczny wybór jedynej klasy:', classesData[0].name);
         selectedClassRef.current = classesData[0];
         setSelectedClass(classesData[0]);
         setShowClassSelection(false);
       } else if (classesData.length === 0) {
-        console.log('⚠️ fetchClasses - nauczyciel nie ma żadnych klas!');
         setShowClassSelection(true); // Pokaż ekran wyboru klas (pusty)
       } else {
-        console.log('🔍 fetchClasses - nauczyciel ma wiele klas');
         // NIE resetuj showClassSelection jeśli klasa jest już wybrana
         if (!selectedClassRef.current) {
-          console.log('🔍 fetchClasses - brak wybranej klasy, pokazuję wybór');
           setShowClassSelection(true);
-        } else {
-          console.log('🔍 fetchClasses - klasa już wybrana, nie resetuję showClassSelection');
         }
       }
-    } catch (error) {
-      console.error('❌ Error fetching classes:', error);
-      console.error('❌ Error details:', error);
-      setError(`Wystąpił błąd podczas pobierania klas: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
+      setError('Wystąpił błąd podczas pobierania klas');
       fetchClassesCalledRef.current = null; // Resetuj flagę w przypadku błędu
     } finally {
       // Ustaw loading na false po zakończeniu fetchClasses
       setLoading(false);
-      console.log('✅ fetchClasses - ustawiam loading na false');
       
       // Resetuj flagę po zakończeniu (po krótkim opóźnieniu, aby uniknąć race condition)
       setTimeout(() => {
         fetchClassesCalledRef.current = null;
-        console.log('🔄 fetchClasses - resetuję flagę po zakończeniu');
       }, 1000);
     }
   }, [user]);
@@ -266,22 +157,12 @@ export default function StudentsPage() {
       const unassignedStudents = allUsers.filter(userData => userData.assignedToTeacher !== user.uid);
       
       setAllStudents(unassignedStudents);
-    } catch (error) {
-      console.error('Error fetching all students:', error);
+    } catch {
     }
   }, [user]);
 
   const fetchStudents = useCallback(async () => {
-    console.log('📚📚📚 fetchStudents - START 📚📚📚');
-    console.log('📚 fetchStudents - user:', user);
-    console.log('📚 fetchStudents - user.uid:', user?.uid);
-    console.log('📚 fetchStudents - selectedClass:', selectedClass);
-    console.log('📚 fetchStudents - selectedClass?.name:', selectedClass?.name);
-    console.log('📚 fetchStudents - selectedClass?.id:', selectedClass?.id);
-    console.log('📚 fetchStudents - selectedClass?.students:', selectedClass?.students);
-    
     if (!user || !user.uid) {
-      console.error('❌ fetchStudents - Brak użytkownika lub UID');
       setError('Brak danych użytkownika');
       setLoading(false);
       return;
@@ -289,7 +170,6 @@ export default function StudentsPage() {
     
     // Jeśli nie wybrano klasy, nie pobieraj uczniów
     if (!selectedClass) {
-      console.log('⚠️ fetchStudents - brak wybranej klasy, pomijam pobieranie uczniów');
       setStudents([]);
       setLoading(false);
       return;
@@ -297,19 +177,15 @@ export default function StudentsPage() {
     
     // Zapobiegaj wielokrotnemu wywoływaniu dla tej samej klasy
     if (fetchStudentsCalledRef.current === selectedClass.id) {
-      console.log('⚠️ fetchStudents - już wywołane dla tej klasy, pomijam');
       return;
     }
     
     fetchStudentsCalledRef.current = selectedClass.id;
       
-    console.log('✅ fetchStudents - warunki spełnione, zaczynam pobieranie');
     setLoading(true);
     setError(null);
       
     try {
-      console.log('Fetching students for teacher:', user.email, 'UID:', user.uid, 'Selected class:', selectedClass.name);
-      
       // 1. Pobierz wszystkich użytkowników raz
       const usersRef = collection(db, 'users');
       const usersSnapshot = await getDocs(usersRef);
@@ -318,50 +194,22 @@ export default function StudentsPage() {
       const allStudentIds = new Set<string>();
       const courseStudentMap = new Map<string, string[]>(); // studentId -> course titles
       
-      console.log(`🔍 Pobieram uczniów TYLKO z klasy: ${selectedClass.name} (ID: ${selectedClass.id})`);
       const classStudentIds = selectedClass.students || [];
-      console.log(`🔍 Uczniowie w klasie:`, classStudentIds);
-      console.log(`🔍 Szczegóły klasy:`, selectedClass);
       
       // Dodaj uczniów z wybranej klasy
-      classStudentIds.forEach((studentId, index) => {
-        console.log(`🔍 Sprawdzam ucznia ${index + 1}/${classStudentIds.length}: ${studentId}`);
+      classStudentIds.forEach((studentId) => {
         const userDoc = usersSnapshot.docs.find(doc => doc.id === studentId);
-          if (userDoc) {
-            const userData = userDoc.data();
-          console.log(`🔍 Dane ucznia ${studentId}:`, {
-            email: userData.email,
-            displayName: userData.displayName,
-            role: userData.role,
-            firstName: userData.firstName,
-            lastName: userData.lastName
-          });
-            if (userData.role === 'student') {
-            console.log(`✅ Znaleziono ucznia z klasy: ${userData.email || userData.displayName}`);
+        if (userDoc) {
+          const userData = userDoc.data();
+          if (userData.role === 'student') {
             allStudentIds.add(studentId);
             // Dodaj informację o klasie
             const existing = courseStudentMap.get(studentId) || [];
             if (!existing.includes(selectedClass.name)) {
               courseStudentMap.set(studentId, [...existing, selectedClass.name]);
             }
-          } else {
-            console.log(`❌ Użytkownik ${studentId} nie jest studentem (rola: ${userData.role})`);
-            }
-          } else {
-          console.log(`❌ Nie znaleziono dokumentu dla ucznia: ${studentId}`);
+          }
         }
-      });
-      
-      console.log('🔍 Found students:', allStudentIds.size);
-      console.log('🔍 All student IDs:', Array.from(allStudentIds));
-      console.log('🔍 Course-Student mapping:', Object.fromEntries(courseStudentMap));
-      
-      // Debug: sprawdź wszystkich użytkowników z rolą student
-      const allStudents = usersSnapshot.docs.filter(doc => doc.data().role === 'student');
-      console.log('🔍 All students in database:', allStudents.length);
-      allStudents.forEach(doc => {
-        const data = doc.data();
-        console.log(`🎓 Student: ${data.email || data.displayName}, ID: ${doc.id}, assignedToTeacher: ${data.assignedToTeacher}`);
       });
       
       // 3. Pobierz dane uczniów i oblicz statystyki
@@ -377,7 +225,6 @@ export default function StudentsPage() {
       for (const studentId of allStudentIds) {
         // Sprawdź czy studentId nie jest undefined
         if (!studentId) {
-          console.warn('⚠️ Pomijam studentId undefined');
           continue;
         }
         
@@ -413,50 +260,36 @@ export default function StudentsPage() {
                       lastActivity: `${Math.floor(Math.random() * 24) + 1} godz. temu`
                     };
           
-          console.log(`Student ${studentInfo.name} courses:`, studentCourses);
           studentsData.push(studentInfo);
         }
       }
       
-      console.log('📚 fetchStudents - Processed students data:', studentsData);
-      console.log('📚 fetchStudents - Liczba uczniów:', studentsData.length);
       setStudents(studentsData);
-      console.log('✅ fetchStudents - setStudents wywołane z', studentsData.length, 'uczniami');
       
-    } catch (error) {
-      console.error('❌ fetchStudents - Error fetching students:', error);
-      console.error('❌ fetchStudents - Error details:', JSON.stringify(error, null, 2));
+    } catch {
       setError('Wystąpił błąd podczas pobierania danych uczniów.');
       fetchStudentsCalledRef.current = null; // Resetuj flagę w przypadku błędu
     } finally {
-      console.log('📚 fetchStudents - finally - ustawiam loading na false');
       setLoading(false);
-      console.log('📚📚📚 fetchStudents - KONIEC 📚📚📚');
     }
   }, [user, selectedClass]);
 
   useEffect(() => {
     if (user && user.uid) {
-      console.log('🔍 useEffect - user changed, wywołuję fetchClasses, fetchAllStudents');
       // Resetuj flagi przy zmianie użytkownika
       fetchClassesCalledRef.current = null;
       fetchStudentsCalledRef.current = null;
-      console.log('🔄 useEffect - zresetowano flagi');
       
       // NIE wywołuj fetchStudents tutaj - to jest obsługiwane przez useEffect [selectedClass]
       // Użyj setTimeout, aby uniknąć wywołania dwa razy w React Strict Mode
       const timeoutId = setTimeout(() => {
-        console.log('⏰ useEffect - wywołuję fetchClasses po timeout');
         fetchClasses();
         fetchAllStudents();
       }, 100);
       
       return () => {
         clearTimeout(timeoutId);
-        console.log('🧹 useEffect - cleanup timeout');
       };
-    } else {
-      console.log('🔍 useEffect - brak użytkownika lub UID');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -468,21 +301,9 @@ export default function StudentsPage() {
 
   // 🆕 NOWY useEffect - pobieranie uczniów gdy zmieni się wybrana klasa
   useEffect(() => {
-    console.log('🔍 useEffect [selectedClass] - START');
-    console.log('🔍 useEffect [selectedClass] - selectedClass:', selectedClass);
-    console.log('🔍 useEffect [selectedClass] - user:', user);
-    console.log('🔍 useEffect [selectedClass] - showClassSelection:', showClassSelection);
-    
     if (selectedClass && user) {
-      console.log('✅ useEffect [selectedClass] - warunki spełnione, wywołuję fetchStudents');
-      console.log('✅ useEffect [selectedClass] - klasa:', selectedClass.name, 'ID:', selectedClass.id);
       fetchStudents();
-    } else {
-      console.log('❌ useEffect [selectedClass] - warunki NIE spełnione');
-      if (!selectedClass) console.log('❌ Brak selectedClass');
-      if (!user) console.log('❌ Brak user');
     }
-    console.log('🔍 useEffect [selectedClass] - KONIEC');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClass, user]);
 
@@ -514,8 +335,7 @@ export default function StudentsPage() {
           });
           
           successCount++;
-        } catch (error) {
-          console.error(`Error assigning student ${studentId}:`, error);
+        } catch {
           errorCount++;
         }
       }
@@ -533,18 +353,15 @@ export default function StudentsPage() {
       setSelectedStudents([]);
       
       // Odśwież listę uczniów natychmiast
-      console.log('🔄 handleAssignStudents - Odświeżam listę uczniów...');
       await fetchStudents();
       await fetchAllStudents();
-      console.log('✅ handleAssignStudents - Lista uczniów odświeżona');
       
       // Zamknij modal po krótkim opóźnieniu
       setTimeout(() => {
         setShowAssignModal(false);
       }, 2000);
       
-    } catch (error) {
-      console.error('Error assigning students:', error);
+    } catch {
       setAssignError('Wystąpił błąd podczas przypisywania uczniów.');
     } finally {
       setAssignLoading(false);
@@ -579,7 +396,6 @@ export default function StudentsPage() {
         
         // Znajdź email ucznia
         if (!studentId) {
-          console.warn('⚠️ Pomijam studentId undefined w handleUnassignStudent');
           continue;
         }
         
@@ -604,8 +420,8 @@ export default function StudentsPage() {
       await fetchStudents();
       await fetchAllStudents();
       
-    } catch (error) {
-      console.error('Error unassigning student:', error);
+    } catch {
+      // Ignore
       setError('Wystąpił błąd podczas odłączania ucznia.');
     }
   };
@@ -707,8 +523,8 @@ export default function StudentsPage() {
         }
       }, 200);
       
-    } catch (error) {
-      console.error('❌ handleClassSelect - BŁĄD:', error);
+    } catch {
+      // Ignore
     }
     
     console.log('🚀🚀🚀 handleClassSelect - KONIEC 🚀🚀🚀');
@@ -744,9 +560,9 @@ export default function StudentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-blue-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Enhanced Header */}
-      <div className="bg-white/90 backdrop-blur-xl border-b border-white/30 shadow-sm">
+    <div className="h-screen bg-blue-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Enhanced Header - Fixed */}
+      <div className="bg-white/90 backdrop-blur-xl border-b border-white/30 shadow-sm flex-shrink-0">
         <div className="px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <button
@@ -824,8 +640,9 @@ export default function StudentsPage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-8">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6">
+        <div className="space-y-6 flex-1 flex flex-col min-h-0">
           {/* 🆕 NOWA SEKCJA - Wybór klasy */}
           {showClassSelection && (
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-white/30 shadow-sm">
@@ -871,8 +688,8 @@ export default function StudentsPage() {
                         try {
                           handleClassSelect(classItem);
                           console.log('✅ handleClassSelect wywołane pomyślnie');
-                        } catch (error) {
-                          console.error('❌ Błąd w handleClassSelect:', error);
+                        } catch {
+                          // Ignore
                         }
                       }}
                       onMouseDown={() => {
@@ -1265,8 +1082,8 @@ export default function StudentsPage() {
           {/* Students Display - Cards or List - pokazuj tylko gdy nie jesteśmy w wyborze klas */}
           {!showClassSelection && (
             <>
-          {/* Mobile: Always show cards (regardless of viewMode) */}
-          <div className="md:hidden">
+          {/* Mobile: Always show cards (regardless of viewMode) - Scrollable */}
+          <div className="md:hidden flex-1 overflow-y-auto min-h-0">
             <div className="grid grid-cols-1 gap-6">
               {filteredStudents.map((student) => (
                 <div key={student.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden group">
@@ -1340,8 +1157,8 @@ export default function StudentsPage() {
             </div>
           </div>
 
-          {/* Desktop: Show cards or list based on viewMode */}
-          <div className="hidden md:block">
+          {/* Desktop: Show cards or list based on viewMode - Scrollable */}
+          <div className="hidden md:block flex-1 overflow-y-auto min-h-0">
           {viewMode === 'cards' ? (
             /* Enhanced Students Grid - Clean Design */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

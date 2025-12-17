@@ -1,10 +1,48 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Award, TrendingUp, Users, Star, BarChart3, Clock, Plus, Edit, Trash2 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { useAuth } from '../../../../context/AuthContext';
 import { SurveyEditor } from '../../../../components/SurveyEditor';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Helper to chunk array for Firestore 'in' queries (max 10 items)
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 interface SurveyResponse {
   id: string;
@@ -190,57 +228,63 @@ export default function TeacherSurveysPage() {
   const [selectedCompareStudent, setSelectedCompareStudent] = useState<string>('');
   const [comparisonData, setComparisonData] = useState<any>(null);
 
-  useEffect(() => {
-    const fetchSurveyData = async () => {
-      if (!user?.uid) return;
+  const fetchSurveyData = useCallback(async () => {
+    if (!user?.uid) return;
 
-      try {
-        console.log('Pobieranie ankiet dla nauczyciela:', user.uid);
+    try {
+      await measureAsync('TeacherSurveys:fetchSurveyData', async () => {
+        // Check cache
+        const cacheKey = `teacher_surveys_${user.uid}`;
+        const cached = getSessionCache<{
+          responses: SurveyResponse[];
+          surveys: Survey[];
+          stats: typeof overallStats;
+          questionStats: QuestionStats[];
+        }>(cacheKey);
         
-        // Pobierz wszystkie ankiety dla tego nauczyciela
-        const surveysQuery = query(
-          collection(db, 'teacherSurveys'),
-          where('teacherId', '==', user.uid)
-        );
-        const surveysSnapshot = await getDocs(surveysQuery);
+        if (cached) {
+          setSurveyResponses(cached.responses);
+          setSurveys(cached.surveys);
+          setOverallStats(cached.stats);
+          setQuestionStats(cached.questionStats);
+          setLoading(false);
+          return;
+        }
+        
+        // Fetch surveys and templates in parallel
+        const [surveysSnapshot, surveyTemplatesSnapshot] = await Promise.all([
+          getDocs(query(collection(db, 'teacherSurveys'), where('teacherId', '==', user.uid), limit(200))),
+          getDocs(query(collection(db, 'surveyTemplates'), where('created_by', '==', user.uid), limit(50)))
+        ]);
         
         const responses: SurveyResponse[] = surveysSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         } as SurveyResponse));
 
-        console.log(`Znaleziono ${responses.length} ankiet dla nauczyciela`);
-        setSurveyResponses(responses);
-
-        // Pobierz szablony ankiet utworzone przez nauczyciela
-        const surveyTemplatesQuery = query(
-          collection(db, 'surveyTemplates'),
-          where('created_by', '==', user.uid)
-        );
-        const surveyTemplatesSnapshot = await getDocs(surveyTemplatesQuery);
-        
         const surveyTemplates: Survey[] = surveyTemplatesSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         } as Survey));
 
-        console.log(`Znaleziono ${surveyTemplates.length} szablonów ankiet`);
+        setSurveyResponses(responses);
         setSurveys(surveyTemplates);
 
-        // Oblicz ogólne statystyki
+        // Calculate overall stats
         const totalResponses = responses.length;
         const totalScore = responses.reduce((sum, response) => sum + response.averageScore, 0);
         const averageScore = totalResponses > 0 ? totalScore / totalResponses : 0;
         const uniqueStudents = new Set(responses.map(r => r.studentId)).size;
 
-        setOverallStats({
+        const stats = {
           totalResponses,
           averageScore,
           totalStudents: uniqueStudents
-        });
+        };
+        setOverallStats(stats);
 
-        // Oblicz statystyki dla każdego pytania
-        const stats: QuestionStats[] = surveyQuestions.map(question => {
+        // Calculate question stats
+        const questionStats: QuestionStats[] = surveyQuestions.map(question => {
           const questionResponses = responses
             .filter(r => r.responses && r.responses[question.id] !== undefined)
             .map(r => r.responses[question.id]);
@@ -250,7 +294,7 @@ export default function TeacherSurveysPage() {
             ? questionResponses.reduce((sum, score) => sum + score, 0) / totalResponses 
             : 0;
 
-          // Rozkład ocen (1-10)
+          // Score distribution (1-10)
           const scoreDistribution: { [key: number]: number } = {};
           for (let i = 1; i <= 10; i++) {
             scoreDistribution[i] = questionResponses.filter(score => score === i).length;
@@ -266,37 +310,51 @@ export default function TeacherSurveysPage() {
           };
         });
 
-        setQuestionStats(stats);
-        console.log('Obliczone statystyki pytań:', stats);
-
-      } catch (error) {
-        console.error('Błąd podczas pobierania ankiet:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSurveyData();
-  }, [user]);
-
-  // Pobierz uczniów nauczyciela
-  useEffect(() => {
-    const fetchStudents = async () => {
-      if (!user?.uid) return;
-
-      try {
-        console.log('🔍 [Student Evaluation] Fetching students for teacher:', user.uid);
+        setQuestionStats(questionStats);
         
-        // Pobierz klasy nauczyciela
+        // Cache the data
+        setSessionCache(cacheKey, {
+          responses,
+          surveys: surveyTemplates,
+          stats,
+          questionStats
+        });
+      });
+    } catch (error) {
+      console.error('Błąd podczas pobierania ankiet:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.uid]);
+
+  useEffect(() => {
+    fetchSurveyData();
+  }, [fetchSurveyData]);
+
+  // Fetch students with caching and optimization
+  const fetchStudents = useCallback(async () => {
+    if (!user?.uid) return;
+
+    try {
+      await measureAsync('TeacherSurveys:fetchStudents', async () => {
+        // Check cache
+        const cacheKey = `teacher_surveys_students_${user.uid}`;
+        const cached = getSessionCache<any[]>(cacheKey);
+        
+        if (cached) {
+          setStudents(cached);
+          return;
+        }
+        
+        // Fetch classes
         const classesQuery = query(
           collection(db, 'classes'),
-          where('teacher_id', '==', user.uid)
+          where('teacher_id', '==', user.uid),
+          limit(50)
         );
         const classesSnapshot = await getDocs(classesQuery);
         
-        console.log(`✅ [Student Evaluation] Found ${classesSnapshot.docs.length} classes`);
-        
-        // Zbierz wszystkich uczniów z klas
+        // Collect all student IDs from classes
         const allStudentIds = new Set<string>();
         classesSnapshot.docs.forEach(doc => {
           const classData = doc.data();
@@ -305,49 +363,55 @@ export default function TeacherSurveysPage() {
           }
         });
 
-        console.log(`👥 [Student Evaluation] Total unique students: ${allStudentIds.size}`);
-
-        // Pobierz dane uczniów - batch query zamiast pętli for
+        // Fetch students in parallel using chunks (Firestore 'in' query limit is 10)
         const studentIdsArray = Array.from(allStudentIds);
-        const studentQueries = studentIdsArray.slice(0, 30).map(studentId => 
-          getDocs(query(collection(db, 'users'), where('uid', '==', studentId), limit(1)))
+        const chunks = chunkArray(studentIdsArray, 10);
+        
+        const studentPromises = chunks.map(chunk => 
+          getDocs(query(collection(db, 'users'), where('uid', 'in', chunk), where('role', '==', 'student')))
         );
-        const studentSnapshots = await Promise.all(studentQueries);
+        
+        const studentSnapshots = await Promise.all(studentPromises);
         
         const studentsData = studentSnapshots
-          .filter(snapshot => !snapshot.empty)
-          .map((snapshot, idx) => {
-            const userData = snapshot.docs[0].data();
-            return {
-              id: studentIdsArray[idx],
-              email: userData.email,
-              displayName: userData.displayName || userData.email,
-              ...userData
-            };
-          });
+          .flatMap(snapshot => snapshot.docs.map(doc => ({
+            id: doc.id,
+            email: doc.data().email,
+            displayName: doc.data().displayName || doc.data().email,
+            ...doc.data()
+          })));
 
-        console.log(`✅ [Student Evaluation] Fetched ${studentsData.length} student profiles`);
         setStudents(studentsData);
+        setSessionCache(cacheKey, studentsData);
+      });
+    } catch (error) {
+      console.error('Error fetching students:', error);
+    }
+  }, [user?.uid]);
 
-      } catch (error) {
-        console.error('❌ [Student Evaluation] Error fetching students:', error);
-      }
-    };
-
+  useEffect(() => {
     fetchStudents();
-  }, [user]);
+  }, [fetchStudents]);
 
   // Pobierz oceny uczniów
-  useEffect(() => {
-    const fetchStudentEvaluations = async () => {
-      if (!user?.uid) return;
+  const fetchStudentEvaluations = useCallback(async () => {
+    if (!user?.uid) return;
 
-      try {
-        console.log('🔍 [Student Evaluation] Fetching all student evaluations by teacher:', user.uid);
+    try {
+      await measureAsync('TeacherSurveys:fetchStudentEvaluations', async () => {
+        // Check cache
+        const cacheKey = `teacher_surveys_evaluations_${user.uid}`;
+        const cached = getSessionCache<any[]>(cacheKey);
+        
+        if (cached) {
+          setStudentEvaluations(cached);
+          return;
+        }
         
         const evaluationsQuery = query(
           collection(db, 'studentEvaluations'),
-          where('teacherId', '==', user.uid)
+          where('teacherId', '==', user.uid),
+          limit(200)
         );
         const evaluationsSnapshot = await getDocs(evaluationsQuery);
         
@@ -356,16 +420,17 @@ export default function TeacherSurveysPage() {
           ...doc.data()
         }));
 
-        console.log(`✅ [Student Evaluation] Found ${evaluations.length} evaluations by this teacher`);
         setStudentEvaluations(evaluations);
+        setSessionCache(cacheKey, evaluations);
+      });
+    } catch (error) {
+      console.error('Error fetching evaluations:', error);
+    }
+  }, [user?.uid]);
 
-      } catch (error) {
-        console.error('❌ [Student Evaluation] Error fetching evaluations:', error);
-      }
-    };
-
+  useEffect(() => {
     fetchStudentEvaluations();
-  }, [user]);
+  }, [fetchStudentEvaluations]);
 
   const getScoreColor = (score: number) => {
     if (score >= 8) return 'text-green-700 dark:text-green-300';
@@ -431,9 +496,14 @@ export default function TeacherSurveysPage() {
 
     try {
       await deleteDoc(doc(db, 'surveyTemplates', surveyId));
-      console.log('Ankieta usunięta');
-      // Odśwież dane
-      window.location.reload();
+      
+      // Invalidate cache
+      if (user?.uid) {
+        sessionStorage.removeItem(`teacher_surveys_${user.uid}`);
+      }
+      
+      // Refresh data
+      fetchSurveyData();
     } catch (error) {
       console.error('Błąd podczas usuwania ankiety:', error);
       alert('Wystąpił błąd podczas usuwania ankiety');
@@ -494,17 +564,12 @@ export default function TeacherSurveysPage() {
       setEvaluationResponses({});
       setEvaluationComment('');
       
-      // Odśwież dane
-      const evaluationsQuery = query(
-        collection(db, 'studentEvaluations'),
-        where('teacherId', '==', user?.uid)
-      );
-      const evaluationsSnapshot = await getDocs(evaluationsQuery);
-      const evaluations = evaluationsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setStudentEvaluations(evaluations);
+      // Invalidate cache and refresh
+      if (user?.uid) {
+        sessionStorage.removeItem(`teacher_surveys_evaluations_${user.uid}`);
+        sessionStorage.removeItem(`teacher_surveys_${user.uid}`);
+      }
+      fetchStudentEvaluations();
 
     } catch (error) {
       console.error('❌ [Student Evaluation] Error submitting evaluation:', error);
@@ -635,9 +700,9 @@ export default function TeacherSurveysPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 shadow-sm flex-shrink-0">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <button
@@ -657,9 +722,10 @@ export default function TeacherSurveysPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 bg-white/60 backdrop-blur-sm rounded-lg p-1 border border-white/20">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-4">
+        {/* Tabs - Fixed */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 bg-white/60 backdrop-blur-sm rounded-lg p-1 border border-white/20 mb-4 flex-shrink-0">
           <button
             onClick={() => setActiveTab('responses')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -701,9 +767,9 @@ export default function TeacherSurveysPage() {
             📈 Porównaj oceny
           </button>
         </div>
-      </div>
 
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+        {/* Tab Content - Scrollable */}
+        <div className="flex-1 overflow-y-auto min-h-0">
         {activeTab === 'responses' ? (
           <>
             {/* Ogólne statystyki */}
@@ -1304,6 +1370,7 @@ export default function TeacherSurveysPage() {
             </div>
           </div>
         ) : null}
+        </div>
       </div>
     </div>
   );

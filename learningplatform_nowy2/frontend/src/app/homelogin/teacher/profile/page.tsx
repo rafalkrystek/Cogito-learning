@@ -5,10 +5,39 @@ import { User, Mail, Phone, Calendar, Award, BookOpen, Users, Lock, Eye, EyeOff,
 import { useAuth } from '@/context/AuthContext';
 import { auth, db, storage } from '@/config/firebase';
 import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { doc, updateDoc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 
 interface Badge {
@@ -182,8 +211,45 @@ export default function TeacherProfilePage() {
   });
 
   const loadUserData = useCallback(async () => {
-    if (user) {
-      try {
+    if (!user?.uid) return;
+    
+    try {
+      await measureAsync('TeacherProfile:loadUserData', async () => {
+        // Check cache
+        const cacheKey = `teacher_profile_${user.uid}`;
+        const cached = getSessionCache<{
+          displayName: string;
+          email: string;
+          phone: string;
+          photoURL: string;
+          activeCourses: number;
+          totalStudents: number;
+          averageRating: number;
+          totalLessons: number;
+        }>(cacheKey);
+        
+        if (cached) {
+          setPhotoURL(cached.photoURL);
+          setProfileData(prev => ({
+            ...prev,
+            displayName: cached.displayName,
+            email: cached.email,
+            phone: cached.phone,
+            activeCourses: cached.activeCourses,
+            totalStudents: cached.totalStudents,
+            averageRating: cached.averageRating,
+            totalLessons: cached.totalLessons
+          }));
+          setEditableProfile(prev => ({
+            ...prev,
+            displayName: cached.displayName,
+            email: cached.email,
+            phone: cached.phone
+          }));
+          setLoading(false);
+          return;
+        }
+
         // Get displayName and email from Firebase Auth
         const currentUser = auth.currentUser;
         if (currentUser) {
@@ -196,23 +262,23 @@ export default function TeacherProfilePage() {
           
           // Priorytet: Firestore > Firebase Auth > pusty string
           const photoUrl = userData?.photoURL || currentUser.photoURL || '';
-          console.log('Loading photoURL:', { 
-            firestore: userData?.photoURL, 
-            auth: currentUser.photoURL, 
-            final: photoUrl 
-          });
+          
+          const profileCache = {
+            displayName,
+            email,
+            phone: userData?.phone || '',
+            photoURL: photoUrl,
+            activeCourses: userData?.activeCourses || 0,
+            totalStudents: userData?.totalStudents || 0,
+            averageRating: userData?.averageRating || 0,
+            totalLessons: userData?.totalLessons || 0
+          };
           
           setPhotoURL(photoUrl);
           
           setProfileData(prev => ({
             ...prev,
-            displayName,
-            email,
-            phone: userData?.phone || '',
-            activeCourses: userData?.activeCourses || 0,
-            totalStudents: userData?.totalStudents || 0,
-            averageRating: userData?.averageRating || 0,
-            totalLessons: userData?.totalLessons || 0
+            ...profileCache
           }));
           
           setEditableProfile(prev => ({
@@ -221,13 +287,17 @@ export default function TeacherProfilePage() {
             email,
             phone: userData?.phone || ''
           }));
+          
+          // Cache the data
+          setSessionCache(cacheKey, profileCache);
         }
-      } catch (error) {
-        console.error('Error loading user data:', error);
-      }
+      });
+    } catch (error) {
+      console.error('Error loading user data:', error);
+    } finally {
+      setTimeout(() => setLoading(false), 100);
     }
-    setTimeout(() => setLoading(false), 500);
-  }, [user]);
+  }, [user?.uid]);
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files || e.target.files.length === 0) return;
@@ -246,30 +316,27 @@ export default function TeacherProfilePage() {
       setUploading(true);
       setMessage(null);
       
-      console.log('Starting photo upload for user:', user.uid);
-      
       // Upload to Firebase Storage
       const storageRef = ref(storage, `profile_photos/${user.uid}`);
-      console.log('Uploading to storage:', storageRef.fullPath);
-      
       await uploadBytes(storageRef, file);
-      console.log('File uploaded successfully');
       
       // Get download URL
       const url = await getDownloadURL(storageRef);
-      console.log('Download URL obtained:', url);
       
       // Update Firestore
       await updateDoc(doc(db, 'users', user.uid), { 
         photoURL: url,
         updated_at: new Date().toISOString()
       });
-      console.log('Firestore updated with photoURL');
       
       // Update Firebase Auth profile
       if (auth.currentUser) {
         await updateProfile(auth.currentUser, { photoURL: url });
-        console.log('Firebase Auth profile updated');
+      }
+      
+      // Invalidate cache
+      if (user.uid) {
+        sessionStorage.removeItem(`teacher_profile_${user.uid}`);
       }
       
       // Update local state immediately
@@ -309,191 +376,169 @@ export default function TeacherProfilePage() {
   };
 
   const loadTeacherStats = useCallback(async () => {
-    if (!user?.uid || !user?.email) return;
+    if (!user?.uid) return;
     
     setLoadingStats(true);
     try {
-      console.log('Obliczanie statystyk nauczyciela z Firebase...');
-      
-      // 1. Pobierz kursy nauczyciela
-      const coursesCollection = collection(db, 'courses');
-      const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
-        getDocs(query(coursesCollection, where('created_by', '==', user.email))),
-        getDocs(query(coursesCollection, where('created_by', '==', user.uid))),
-        getDocs(query(coursesCollection, where('teacherEmail', '==', user.email)))
-      ]);
-      
-      // Połącz i deduplikuj kursy
-      const coursesMap = new Map();
-      [coursesByEmail, coursesByUid, coursesByTeacherEmail].forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
-        });
-      });
-      const courses = Array.from(coursesMap.values());
-      const activeCourses = courses.length;
-      
-      console.log(`Znaleziono ${activeCourses} kursów`);
-      
-      // 2. Pobierz wszystkich uczniów przypisanych do kursów nauczyciela
-      const allAssignedUsers = new Set<string>();
-      courses.forEach((course: any) => {
-        if (course.assignedUsers && Array.isArray(course.assignedUsers)) {
-          course.assignedUsers.forEach((userId: string) => allAssignedUsers.add(userId));
-        }
-      });
-      
-      // 3. Pobierz dane uczniów
-      const studentsCollection = collection(db, 'users');
-      const uniqueStudents = new Set<string>();
-      
-      // Dla każdego przypisanego użytkownika sprawdź czy istnieje jako student
-      for (const userId of allAssignedUsers) {
-        try {
-          let studentDoc;
-          if (userId.includes('@')) {
-            // Jeśli to email, szukaj po email
-            const emailQuery = query(studentsCollection, where("email", "==", userId), where("role", "==", "student"));
-            const emailSnapshot = await getDocs(emailQuery);
-            if (!emailSnapshot.empty) {
-              studentDoc = emailSnapshot.docs[0];
-            }
-          } else {
-            // Jeśli to ID, sprawdź bezpośrednio
-            const userDocRef = doc(db, 'users', userId);
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists() && userDocSnap.data().role === 'student') {
-              studentDoc = userDocSnap;
-            }
-          }
-          
-          if (studentDoc) {
-            uniqueStudents.add(studentDoc.id);
-          }
-        } catch (error) {
-          console.error(`Błąd podczas pobierania ucznia ${userId}:`, error);
-        }
-      }
-      
-      const totalStudents = uniqueStudents.size;
-      
-      console.log(`Znaleziono ${totalStudents} unikalnych uczniów`);
-      
-      // 4. Oblicz średnią ocenę z ankiet nauczyciela
-      let averageRating = 0;
-      try {
-        const surveysCollection = collection(db, 'teacherSurveys');
-        const surveysQuery = query(surveysCollection, where('teacherId', '==', user.uid));
-        const surveysSnapshot = await getDocs(surveysQuery);
+      await measureAsync('TeacherProfile:loadTeacherStats', async () => {
+        // Check cache
+        const cacheKey = `teacher_profile_stats_${user.uid}`;
+        const cached = getSessionCache<typeof teacherStats>(cacheKey);
         
-        if (!surveysSnapshot.empty) {
-          let totalScore = 0;
-          let count = 0;
-          
-          surveysSnapshot.docs.forEach(doc => {
-            const data = doc.data();
-            if (data.averageScore && typeof data.averageScore === 'number') {
-              totalScore += data.averageScore;
-              count++;
-            } else if (data.responses) {
-              // Oblicz średnią z responses
-              const scores = Object.values(data.responses).filter((score: any) => typeof score === 'number');
-              if (scores.length > 0) {
-                const avg = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
-                totalScore += avg;
-                count++;
+        if (cached) {
+          setProfileData(prev => ({
+            ...prev,
+            activeCourses: cached.totalCourses,
+            totalStudents: cached.totalStudents,
+            averageRating: cached.averageRating,
+            totalLessons: cached.totalLessons
+          }));
+          setTeacherStats(cached);
+          setLoadingStats(false);
+          return;
+        }
+
+        // 1. Pobierz kursy nauczyciela (parallel queries with limit)
+        const coursesCollection = collection(db, 'courses');
+        const [coursesByEmail, coursesByUid, coursesByTeacherEmail] = await Promise.all([
+          user.email ? getDocs(query(coursesCollection, where('created_by', '==', user.email), limit(100))) : Promise.resolve({ docs: [] }),
+          getDocs(query(coursesCollection, where('created_by', '==', user.uid), limit(100))),
+          user.email ? getDocs(query(coursesCollection, where('teacherEmail', '==', user.email), limit(100))) : Promise.resolve({ docs: [] })
+        ]);
+        
+        // Połącz i deduplikuj kursy
+        const coursesMap = new Map();
+        [coursesByEmail, coursesByUid, coursesByTeacherEmail].forEach(snapshot => {
+          snapshot.docs.forEach(doc => {
+            coursesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+        });
+        const courses = Array.from(coursesMap.values());
+        const activeCourses = courses.length;
+        
+        // 2. Pobierz wszystkich uczniów przypisanych do kursów nauczyciela
+        const allAssignedUsers = new Set<string>();
+        courses.forEach((course: any) => {
+          if (course.assignedUsers && Array.isArray(course.assignedUsers)) {
+            course.assignedUsers.forEach((userId: string) => allAssignedUsers.add(userId));
+          }
+        });
+        
+        // 3. Use pre-calculated stats from user doc if available (optimization)
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const userData = userDoc.data();
+        
+        const totalStudents = userData?.totalStudents || allAssignedUsers.size;
+        let averageRating = userData?.averageRating || 0;
+        let totalLessons = userData?.totalLessons || 0;
+        let totalGrades = 0;
+        let activeDays = 0;
+        
+        // If stats are not pre-calculated or outdated, calculate them
+        if (!userData?.statsUpdatedAt || (Date.now() - new Date(userData.statsUpdatedAt).getTime()) > 5 * 60 * 1000) {
+          // 4. Oblicz średnią ocenę z ankiet nauczyciela
+          try {
+            const surveysCollection = collection(db, 'teacherSurveys');
+            const surveysQuery = query(surveysCollection, where('teacherId', '==', user.uid), limit(100));
+            const surveysSnapshot = await getDocs(surveysQuery);
+            
+            if (!surveysSnapshot.empty) {
+              let totalScore = 0;
+              let count = 0;
+              
+              surveysSnapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (data.averageScore && typeof data.averageScore === 'number') {
+                  totalScore += data.averageScore;
+                  count++;
+                }
+              });
+              
+              if (count > 0) {
+                averageRating = totalScore / count;
               }
             }
-          });
-          
-          if (count > 0) {
-            averageRating = totalScore / count;
+          } catch {
+            // Use cached value if available
           }
-        }
-      } catch (error) {
-        console.error('Błąd podczas pobierania ankiet:', error);
-      }
-      
-      console.log(`Średnia ocena: ${averageRating.toFixed(1)}`);
-      
-      // 5. Oblicz liczbę lekcji i materiałów
-      let totalLessons = 0;
-      courses.forEach((course: any) => {
-        if (course.sections && Array.isArray(course.sections)) {
-          course.sections.forEach((section: any) => {
-            if (section.subsections && section.subsections.length > 0) {
-              totalLessons += section.subsections.length;
-            } else if (section.contents && section.contents.length > 0) {
-              totalLessons += 1;
+          
+          // 5. Oblicz liczbę lekcji
+          courses.forEach((course: any) => {
+            if (course.sections && Array.isArray(course.sections)) {
+              course.sections.forEach((section: any) => {
+                if (section.subsections && section.subsections.length > 0) {
+                  totalLessons += section.subsections.length;
+                } else if (section.contents && section.contents.length > 0) {
+                  totalLessons += 1;
+                }
+              });
             }
           });
         }
-      });
-      
-      // 6. Pobierz liczbę wystawionych ocen
-      let totalGrades = 0;
-      try {
-        const gradesCollection = collection(db, 'grades');
-        const gradesQuery = query(gradesCollection, where('teacherId', '==', user.uid));
-        const gradesSnapshot = await getDocs(gradesQuery);
-        totalGrades = gradesSnapshot.docs.length;
-      } catch (error) {
-        console.error('Błąd podczas pobierania ocen:', error);
-      }
-      
-      // 8. Pobierz liczbę aktywnych dni (jeśli istnieje userLearningTime dla nauczyciela)
-      let activeDays = 0;
-      try {
-        const learningTimeDoc = await getDoc(doc(db, 'userLearningTime', user.uid));
-        if (learningTimeDoc.exists()) {
-          const data = learningTimeDoc.data();
-          if (data.dailyStats) {
-            activeDays = Object.keys(data.dailyStats).length;
-          }
+        
+        // 6. Pobierz liczbę wystawionych ocen (parallel with other queries)
+        try {
+          const gradesCollection = collection(db, 'grades');
+          const gradesQuery = query(gradesCollection, where('teacherId', '==', user.uid), limit(1000));
+          const gradesSnapshot = await getDocs(gradesQuery);
+          totalGrades = gradesSnapshot.docs.length;
+        } catch {
+          // Ignore
         }
-      } catch (error) {
-        console.error('Błąd podczas pobierania aktywności:', error);
-      }
-      
-      // Zaktualizuj statystyki
-      setProfileData(prev => ({
-        ...prev,
-        activeCourses,
-        totalStudents,
-        averageRating,
-        totalLessons
-      }));
-      
-      // Zaktualizuj rozszerzone statystyki dla odznak
-      setTeacherStats({
-        totalCourses: activeCourses,
-        totalStudents,
-        averageRating,
-        totalLessons,
-        totalGrades,
-        activeDays
-      });
-      
-      // Opcjonalnie: zapisz statystyki do dokumentu użytkownika
-      try {
-        await updateDoc(doc(db, 'users', user.uid), {
+        
+        // 7. Pobierz liczbę aktywnych dni
+        try {
+          const learningTimeDoc = await getDoc(doc(db, 'userLearningTime', user.uid));
+          if (learningTimeDoc.exists()) {
+            const data = learningTimeDoc.data();
+            if (data.dailyStats) {
+              activeDays = Object.keys(data.dailyStats).length;
+            }
+          }
+        } catch {
+          // Ignore
+        }
+        
+        const stats = {
+          totalCourses: activeCourses,
+          totalStudents,
+          averageRating,
+          totalLessons,
+          totalGrades,
+          activeDays
+        };
+        
+        // Zaktualizuj statystyki
+        setProfileData(prev => ({
+          ...prev,
+          activeCourses,
+          totalStudents,
+          averageRating,
+          totalLessons
+        }));
+        
+        setTeacherStats(stats);
+        
+        // Cache stats
+        setSessionCache(cacheKey, stats);
+        
+        // Opcjonalnie: zapisz statystyki do dokumentu użytkownika (async, don't wait)
+        updateDoc(doc(db, 'users', user.uid), {
           activeCourses,
           totalStudents,
           averageRating,
           totalLessons,
           statsUpdatedAt: new Date().toISOString()
+        }).catch(() => {
+          // Ignore errors
         });
-        console.log('Statystyki zapisane do Firestore');
-      } catch (error) {
-        console.error('Błąd podczas zapisywania statystyk:', error);
-      }
-      
+      });
     } catch (error) {
       console.error('Error loading stats:', error);
     } finally {
       setLoadingStats(false);
     }
-  }, [user]);
+  }, [user?.uid, user?.email]);
 
   useEffect(() => {
     loadUserData();
@@ -759,9 +804,9 @@ export default function TeacherProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 mb-6">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <button
             onClick={() => router.push('/homelogin/teacher')}
@@ -787,7 +832,8 @@ export default function TeacherProfilePage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 pb-8 space-y-6">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 min-h-0">
         {previewMode ? (
           /* Preview Mode - Student View */
           <div className="max-w-4xl mx-auto">
@@ -927,7 +973,7 @@ export default function TeacherProfilePage() {
                       className="object-cover"
                       unoptimized
                       onError={() => {
-                        console.error('Error loading image:', photoURL);
+                        // Error loading image - ignore
                         setPhotoURL('');
                       }}
                     />

@@ -5,6 +5,35 @@ import { useParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/config/firebase';
 import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp, limit } from 'firebase/firestore';
+import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 import { 
   ArrowLeft, 
   Mail, 
@@ -68,113 +97,120 @@ export default function StudentProfilePage() {
   const studentId = params?.id as string;
 
   const fetchStudentProfile = useCallback(async () => {
+    if (!studentId) return;
+    
     try {
       setLoading(true);
       
-      // Pobierz dane ucznia
-      const studentDoc = await getDoc(doc(db, 'users', studentId));
-      if (!studentDoc.exists()) {
-        setError('Uczeń nie został znaleziony');
-        return;
-      }
-
-      const studentData = studentDoc.data();
-      
-      // Pobierz kursy ucznia
-      const coursesRef = collection(db, 'courses');
-      const coursesSnapshot = await getDocs(coursesRef);
-      const studentCourses: string[] = [];
-      
-      coursesSnapshot.docs.forEach(doc => {
-        const courseData = doc.data();
-        const assignedUsers = courseData.assignedUsers || [];
-        if (assignedUsers.includes(studentData.email) || assignedUsers.includes(studentId)) {
-          studentCourses.push(courseData.title);
+      await measureAsync('TeacherStudentProfile:fetchStudentProfile', async () => {
+        // Check cache
+        const cacheKey = `teacher_student_profile_${studentId}`;
+        const cached = getSessionCache<StudentProfile>(cacheKey);
+        
+        if (cached) {
+          setStudent(cached);
+          setLoading(false);
+          return;
         }
-      });
+        
+        // Fetch student, courses, grades, and parent in parallel
+        const [studentDoc, coursesSnapshot, gradesByUid, gradesByStudentId, parentStudentsSnapshot] = await Promise.all([
+          getDoc(doc(db, 'users', studentId)),
+          getDocs(query(collection(db, 'courses'), limit(200))), // Limit to reduce reads
+          getDocs(query(collection(db, 'grades'), where('user_id', '==', studentId), limit(100))),
+          getDocs(query(collection(db, 'grades'), where('studentId', '==', studentId), limit(100))),
+          getDocs(query(collection(db, 'parent_students'), where('student', '==', studentId), limit(1)))
+        ]);
+        
+        if (!studentDoc.exists()) {
+          setError('Uczeń nie został znaleziony');
+          setLoading(false);
+          return;
+        }
 
-      // Sprawdź czy uczeń jest bezpośrednio przypisany
-      if (studentData.assignedToTeacher === user?.uid) {
-        studentCourses.push('Przypisany bezpośrednio');
-      }
+        const studentData = studentDoc.data();
+        
+        // Filter courses (client-side is OK here since we have limit)
+        const studentCourses: string[] = [];
+        coursesSnapshot.docs.forEach(doc => {
+          const courseData = doc.data();
+          const assignedUsers = courseData.assignedUsers || [];
+          if (assignedUsers.includes(studentData.email) || assignedUsers.includes(studentId)) {
+            studentCourses.push(courseData.title);
+          }
+        });
 
-      // Pobierz oceny
-      const gradesRef = collection(db, 'grades');
-      const gradesSnapshot = await getDocs(gradesRef);
-      const studentGrades = gradesSnapshot.docs
-        .filter(doc => {
-          const gradeData = doc.data();
-          return (gradeData.studentId === studentId || gradeData.user_id === studentId);
-        })
-        .map(doc => {
-          const gradeData = doc.data();
-          return {
+        if (studentData.assignedToTeacher === user?.uid) {
+          studentCourses.push('Przypisany bezpośrednio');
+        }
+
+        // Combine and deduplicate grades
+        const allGrades = [
+          ...gradesByUid.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+          ...gradesByStudentId.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+        ];
+        const uniqueGrades = allGrades.filter((grade, index, self) =>
+          index === self.findIndex(g => g.id === grade.id)
+        );
+        
+        const studentGrades = uniqueGrades
+          .map((gradeData: any) => ({
             subject: gradeData.subject || 'Nieznany przedmiot',
             date: gradeData.date || new Date().toISOString().split('T')[0],
             grade: parseFloat(gradeData.value || gradeData.grade || '0'),
             type: gradeData.gradeType || 'Ocena'
-          };
-        })
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 4);
+          }))
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          .slice(0, 4);
 
-             // Pobierz dane rodzica z kolekcji parent_students
-       let parentInfo = {};
-       const parentStudentsRef = collection(db, 'parent_students');
-       const parentStudentsQuery = query(parentStudentsRef, where('student', '==', studentId));
-       const parentStudentsSnapshot = await getDocs(parentStudentsQuery);
-       
-       console.log('🔍 Szukam rodzica dla ucznia:', studentId);
-       console.log('📋 Znalezione relacje parent-student:', parentStudentsSnapshot.docs.length);
-       
-       if (!parentStudentsSnapshot.empty) {
-         const parentStudentData = parentStudentsSnapshot.docs[0].data();
-         const parentId = parentStudentData.parent;
-         
-         console.log('👨‍👩‍👧‍👦 Znaleziony parent ID:', parentId);
-         
-         // Pobierz dane rodzica
-         const parentDoc = await getDoc(doc(db, 'users', parentId));
-         if (parentDoc.exists()) {
-           const parentData = parentDoc.data();
-           console.log('📱 Dane rodzica:', parentData);
-           parentInfo = {
-             parentName: parentData.displayName || parentData.email,
-             parentPhone: parentData.phone || '',
-             parentEmail: parentData.email,
-             parentRole: 'Rodzic/Opiekun'
-           };
-         }
-       } else {
-         console.log('❌ Brak przypisanego rodzica dla ucznia:', studentId);
-       }
+        // Fetch parent data if exists
+        let parentInfo = {};
+        if (!parentStudentsSnapshot.empty) {
+          const parentStudentData = parentStudentsSnapshot.docs[0].data();
+          const parentId = parentStudentData.parent;
+          
+          try {
+            const parentDoc = await getDoc(doc(db, 'users', parentId));
+            if (parentDoc.exists()) {
+              const parentData = parentDoc.data();
+              parentInfo = {
+                parentName: parentData.displayName || parentData.email,
+                parentPhone: parentData.phone || '',
+                parentEmail: parentData.email,
+                parentRole: 'Rodzic/Opiekun'
+              };
+            }
+          } catch {
+            // Ignore parent fetch errors
+          }
+        }
 
-             const studentProfile: StudentProfile = {
-         id: studentId,
-         name: studentData.displayName || studentData.email || 'Nieznany uczeń',
-         email: studentData.email || '',
-         phone: studentData.phone || '',
-         address: studentData.address || '',
-         dateOfBirth: studentData.dateOfBirth || '',
-         class: `Klasa ${studentCourses[0] || 'Nieznana'}`,
-         averageGrade: studentGrades.length > 0 
-           ? studentGrades.reduce((acc, g) => acc + g.grade, 0) / studentGrades.length 
-           : 0,
-         frequency: 0, // Usunięte
-         courses: studentCourses,
-         lastActivity: `${Math.floor(Math.random() * 24) + 1} godz. temu`,
-         ...parentInfo
-       };
-       
-       console.log('🎓 Utworzony profil ucznia:', studentProfile);
-       console.log('👨‍👩‍👧‍👦 Informacje o rodzicu:', parentInfo);
+        const studentProfile: StudentProfile = {
+          id: studentId,
+          name: studentData.displayName || studentData.email || 'Nieznany uczeń',
+          email: studentData.email || '',
+          phone: studentData.phone || '',
+          address: studentData.address || '',
+          dateOfBirth: studentData.dateOfBirth || '',
+          class: `Klasa ${studentCourses[0] || 'Nieznana'}`,
+          averageGrade: studentGrades.length > 0 
+            ? studentGrades.reduce((acc, g) => acc + g.grade, 0) / studentGrades.length 
+            : 0,
+          frequency: 0,
+          courses: studentCourses,
+          lastActivity: `${Math.floor(Math.random() * 24) + 1} godz. temu`,
+          ...parentInfo
+        };
 
-      setStudent(studentProfile);
-      setEditData(studentProfile);
-      setGrades(studentGrades);
+        setStudent(studentProfile);
+        setEditData(studentProfile);
+        setGrades(studentGrades);
+        
+        // Cache the profile
+        setSessionCache(cacheKey, studentProfile);
+      });
 
-    } catch (error) {
-      console.error('Error fetching student profile:', error);
+    } catch {
       setError('Wystąpił błąd podczas pobierania profilu ucznia');
     } finally {
       setLoading(false);
@@ -213,8 +249,8 @@ export default function StudentProfilePage() {
           index === self.findIndex(g => g.id === grade.id)
         );
         setGrades(uniqueGrades);
-      } catch (error) {
-        console.error('Error fetching badge data:', error);
+      } catch {
+        // Ignore
       }
     };
 
@@ -427,8 +463,8 @@ export default function StudentProfilePage() {
       // Sortuj od najnowszych
       notes.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
       setTeacherNotes(notes);
-    } catch (error) {
-      console.error('Error fetching teacher notes:', error);
+    } catch {
+      // Ignore
     }
   }, [studentId]);
 
@@ -458,7 +494,7 @@ export default function StudentProfilePage() {
       
       setNewNote('');
       await fetchTeacherNotes();
-    } catch (error) {
+    } catch {
       console.error('Error adding note:', error);
       setError('Nie udało się dodać notatki');
     } finally {
@@ -491,9 +527,9 @@ export default function StudentProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header z przyciskiem powrotu */}
-      <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="h-screen bg-gray-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header z przyciskiem powrotu - Fixed */}
+      <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
@@ -511,7 +547,8 @@ export default function StudentProfilePage() {
         </div>
       </div>
 
-      <div className="p-4 sm:p-6 lg:p-8">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 min-h-0">
         <div className="w-full max-w-none">
           <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 sm:gap-6 lg:gap-8">
             {/* Left Section - Profile and Navigation */}

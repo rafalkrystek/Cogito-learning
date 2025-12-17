@@ -15,9 +15,9 @@ const Calendar = dynamic(() => import('../../../../components/Calendar'), {
 
 export default function TeacherCalendarPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header z przyciskiem powrotu */}
-      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header z przyciskiem powrotu - Fixed */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-white/20 px-4 sm:px-6 lg:px-8 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
@@ -35,9 +35,10 @@ export default function TeacherCalendarPage() {
         </div>
       </div>
 
-      <div className="flex flex-col">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-y-auto min-h-0">
         {/* Header */}
-        <header className="w-full bg-white/90 backdrop-blur-xl shadow-sm border-b border-white/20 flex items-center justify-between px-8 py-4">
+        <header className="w-full bg-white/90 backdrop-blur-xl shadow-sm border-b border-white/20 flex items-center justify-between px-8 py-4 flex-shrink-0">
           <div>
             <h2 className="text-2xl font-bold text-[#4067EC]">Kalendarz i Aktywności</h2>
             <p className="text-gray-600">Zarządzaj wydarzeniami i harmonogramem zajęć</p>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { 
   School, 
@@ -14,8 +14,36 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { db, auth } from '@/config/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove, serverTimestamp, getDoc, query, where, limit } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { measureAsync } from '@/utils/perf';
+
+// Cache helpers
+const CACHE_TTL_MS = 60 * 1000; // 60s
+
+function getSessionCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { timestamp: number; data: T };
+    if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCache<T>(key: string, data: T) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 interface Class {
   id: string;
@@ -99,40 +127,54 @@ export default function ClassesPage() {
     }
 
     try {
-      const classesRef = collection(db, 'classes');
-      const classesQuery = query(
-        classesRef,
-        where('teacher_id', '==', user.uid),
-        where('is_active', '!=', false),
-        limit(100)
-      );
+      await measureAsync('TeacherClasses:fetchClasses', async () => {
+        // Check cache
+        const cacheKey = `teacher_classes_${user.uid}`;
+        const cached = getSessionCache<Class[]>(cacheKey);
+        
+        if (cached) {
+          setClasses(cached);
+          setError(null);
+          return;
+        }
 
-      const classesSnapshot = await getDocs(classesQuery);
+        const classesRef = collection(db, 'classes');
+        // Firestore doesn't support != for boolean, so we fetch all and filter client-side
+        const classesQuery = query(
+          classesRef,
+          where('teacher_id', '==', user.uid),
+          limit(100)
+        );
 
-      const classesData = classesSnapshot.docs.map(
-        (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Class)
-      );
+        const classesSnapshot = await getDocs(classesQuery);
 
-      setClasses(classesData);
-    } catch (error) {
-      console.error('❌ Error fetching classes:', error);
-      setError('Wystąpił błąd podczas pobierania klas.');
+        const classesData = classesSnapshot.docs
+          .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Class))
+          .filter(cls => cls.is_active !== false); // Filter client-side
+
+        setClasses(classesData);
+        setSessionCache(cacheKey, classesData);
+        setError(null); // Clear any previous errors
+      });
+    } catch (error: any) {
+      setError(`Wystąpił błąd podczas pobierania klas: ${error?.message || 'Nieznany błąd'}`);
     }
-  }, [user]);
+  }, [user?.uid]);
 
   const fetchStudents = useCallback(async () => {
     try {
-      const usersRef = collection(db, 'users');
-      const studentsQuery = query(usersRef, where('role', '==', 'student'));
-      const usersSnapshot = await getDocs(studentsQuery);
+      await measureAsync('TeacherClasses:fetchStudents', async () => {
+        const usersRef = collection(db, 'users');
+        const studentsQuery = query(usersRef, where('role', '==', 'student'), limit(500));
+        const usersSnapshot = await getDocs(studentsQuery);
 
-      const studentsData = usersSnapshot.docs.map(
-        (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Student)
-      );
+        const studentsData = usersSnapshot.docs.map(
+          (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Student)
+        );
 
-      setStudents(studentsData);
-    } catch (error) {
-      console.error('Error fetching students:', error);
+        setStudents(studentsData);
+      });
+    } catch {
     }
   }, []);
 
@@ -140,29 +182,30 @@ export default function ClassesPage() {
     if (!user?.email) return;
 
     try {
-      const coursesRef = collection(db, 'courses');
+      await measureAsync('TeacherClasses:fetchCourses', async () => {
+        const coursesRef = collection(db, 'courses');
 
-      // Pobierz kursy powiązane z nauczycielem (jako twórca lub przypisany nauczyciel)
-      const [createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
-        getDocs(query(coursesRef, where('created_by', '==', user.email))),
-        getDocs(query(coursesRef, where('teacherEmail', '==', user.email)))
-      ]);
+        // Pobierz kursy powiązane z nauczycielem (jako twórca lub przypisany nauczyciel) with limit
+        const [createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
+          getDocs(query(coursesRef, where('created_by', '==', user.email), limit(100))),
+          getDocs(query(coursesRef, where('teacherEmail', '==', user.email), limit(100)))
+        ]);
 
-      const map = new Map<string, Course>();
+        const map = new Map<string, Course>();
 
-      createdBySnapshot.docs.forEach((docSnap) => {
-        map.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Course);
-      });
-
-      teacherEmailSnapshot.docs.forEach((docSnap) => {
-        if (!map.has(docSnap.id)) {
+        createdBySnapshot.docs.forEach((docSnap) => {
           map.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Course);
-        }
-      });
+        });
 
-      setCourses(Array.from(map.values()));
-    } catch (error) {
-      console.error('Error fetching courses:', error);
+        teacherEmailSnapshot.docs.forEach((docSnap) => {
+          if (!map.has(docSnap.id)) {
+            map.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Course);
+          }
+        });
+
+        setCourses(Array.from(map.values()));
+      });
+    } catch {
     }
   }, [user?.email]);
 
@@ -173,11 +216,12 @@ export default function ClassesPage() {
     }
 
     setLoading(true);
+    setError(null); // Clear errors on reload
 
     Promise.all([
-      measureAsync('TeacherClasses:fetchClasses', fetchClasses),
-      measureAsync('TeacherClasses:fetchStudents', fetchStudents),
-      measureAsync('TeacherClasses:fetchCourses', fetchCourses),
+      fetchClasses(),
+      fetchStudents(),
+      fetchCourses(),
     ]).finally(() => {
       setLoading(false);
     });
@@ -198,54 +242,25 @@ export default function ClassesPage() {
   }, []);
 
   const handleCreateClass = async () => {
-    console.log('🚀 ========== START CREATE CLASS ==========');
-    
     if (!formData.name || !formData.grade_level) {
       setError('Wypełnij wszystkie wymagane pola.');
-      console.error('❌ Walidacja nieudana - brak wymaganych pól');
       return;
     }
 
     if (!user || !user.uid) {
       setError('Brak danych użytkownika. Zaloguj się ponownie.');
-      console.error('❌ Brak użytkownika:', { user, hasUid: !!user?.uid });
       return;
     }
 
-    console.log('📋 FormData:', JSON.stringify(formData, null, 2));
-    console.log('👤 User data:', {
-      uid: user.uid,
-      email: user.email,
-      role: user.role,
-      displayName: user.displayName || null
-    });
-
     // Sprawdź czy Firebase Auth jest dostępny
     const currentUser = auth.currentUser;
-    console.log('🔥 Firebase Auth currentUser:', {
-      uid: currentUser?.uid,
-      email: currentUser?.email,
-      emailVerified: currentUser?.emailVerified
-    });
     
     // Sprawdź token i custom claims
-    let tokenRole = null;
     if (currentUser) {
       try {
         const token = await currentUser.getIdTokenResult(true); // forceRefresh
-        tokenRole = token.claims.role;
-        console.log('🎫 Token claims:', {
-          role: token.claims.role,
-          email: token.claims.email,
-          uid: token.claims.uid,
-          allClaims: JSON.stringify(token.claims, null, 2)
-        });
         
         if (!token.claims.role) {
-          console.warn('⚠️ UWAGA: Token nie ma ustawionej roli (role) w custom claims!');
-          console.warn('⚠️ To może powodować problemy z uprawnieniami Firestore.');
-          console.warn('⚠️ Próbuję ustawić custom claims automatycznie...');
-          
           // Próba automatycznego ustawienia custom claims
           try {
             const response = await fetch('/api/set-teacher-role-api', {
@@ -257,20 +272,14 @@ export default function ClassesPage() {
             });
             
             if (response.ok) {
-              console.log('✅ Custom claims ustawione! Odświeżam token...');
               await currentUser.getIdToken(true); // Odśwież token
-              const newToken = await currentUser.getIdTokenResult(true);
-              tokenRole = newToken.claims.role;
-              console.log('✅ Nowy token role:', tokenRole);
-            } else {
-              console.warn('⚠️ Nie udało się ustawić custom claims automatycznie');
             }
-          } catch (setRoleError) {
-            console.warn('⚠️ Błąd podczas ustawiania custom claims:', setRoleError);
+          } catch {
+            // Ignore
           }
         }
-      } catch (tokenError) {
-        console.error('❌ Błąd pobierania token claims:', tokenError);
+      } catch {
+        // Ignore
       }
     }
 
@@ -279,16 +288,7 @@ export default function ClassesPage() {
       const teacherId = String(user.uid).trim();
       const currentUserId = String(currentUser?.uid || user.uid).trim();
       
-      console.log('🔍 Weryfikacja teacher_id:', {
-        teacherId,
-        currentUserId,
-        match: teacherId === currentUserId,
-        userUid: user.uid,
-        currentUserUid: currentUser?.uid
-      });
-      
       if (teacherId !== currentUserId) {
-        console.error('❌ BŁĄD: teacher_id nie pasuje do currentUser.uid!');
         setError('Błąd weryfikacji użytkownika. Odśwież stronę i spróbuj ponownie.');
         return;
       }
@@ -310,67 +310,25 @@ export default function ClassesPage() {
         updated_at: serverTimestamp()
       };
       
-      console.log('📦 ClassData przed zapisem (z weryfikacją):', {
-        ...classData,
-        created_at: '[serverTimestamp]',
-        updated_at: '[serverTimestamp]',
-        teacher_id_verified: classData.teacher_id === currentUserId,
-        teacher_id_type: typeof classData.teacher_id,
-        currentUserId_type: typeof currentUserId,
-        teacher_id_value: classData.teacher_id,
-        currentUserId_value: currentUserId
-      });
-
       // Sprawdź czy kolekcja istnieje
-      console.log('🔍 Sprawdzam dostęp do kolekcji classes...');
       collection(db, 'classes'); // Test dostępności kolekcji
-      console.log('✅ Kolekcja classes dostępna');
-
-      // Test uprawnień przed zapisem
-      console.log('🧪 TEST: Sprawdzam uprawnienia do zapisu...');
-      console.log('🧪 TEST: teacher_id w danych:', classData.teacher_id);
-      console.log('🧪 TEST: request.auth.uid będzie:', currentUserId);
-      console.log('🧪 TEST: Czy będą pasować?', classData.teacher_id === currentUserId);
-      console.log('🧪 TEST: Typy danych:', {
-        teacher_id: typeof classData.teacher_id,
-        currentUserId: typeof currentUserId
-      });
       
       try {
         // Próba odczytu kolekcji (test uprawnień)
         await getDocs(query(collection(db, 'classes'), where('teacher_id', '==', user.uid), limit(1)));
-        console.log('✅ TEST: Uprawnienia do odczytu OK');
-      } catch (readTestError: any) {
-        console.error('❌ TEST: Błąd uprawnień do odczytu:', readTestError);
+      } catch {
+        // Ignore
       }
 
       // Próba 1: Bezpośredni zapis do Firestore
-      console.log('💾 Próbuję zapisać dokument bezpośrednio do Firestore...');
-      let docRef;
       try {
-        docRef = await addDoc(collection(db, 'classes'), classData);
-        console.log('✅ ✅ ✅ SUKCES! Klasa utworzona z ID:', docRef.id);
-        console.log('📄 Pełna ścieżka dokumentu:', docRef.path);
+        await addDoc(collection(db, 'classes'), classData);
       } catch (firestoreError: any) {
-        console.error('❌ Błąd bezpośredniego zapisu do Firestore:', firestoreError);
-        console.error('❌ Error code:', firestoreError?.code);
-        console.error('❌ Error message:', firestoreError?.message);
-        
         // Szczegółowa analiza błędu uprawnień
         if (firestoreError?.code === 'permission-denied') {
-          console.error('🔒 BŁĄD UPRAWNIEŃ - Diagnostyka:');
-          console.error('1. Sprawdź czy token ma ustawioną rolę:', {
-            hasToken: !!currentUser,
-            tokenRole: currentUser ? (await currentUser.getIdTokenResult()).claims.role : 'N/A'
-          });
-          console.error('2. Sprawdź czy reguły Firestore są wdrożone');
-          console.error('3. Sprawdź czy teacher_id w danych == request.auth.uid');
-          
           // Próba 2: Przez API backend (jeśli bezpośredni zapis nie działa)
-          console.log('🔄 Próbuję alternatywną metodę przez API backend...');
           try {
             const token = await currentUser?.getIdToken();
-            console.log('🎫 Token uzyskany, długość:', token?.length);
             
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const response = await fetch(`${apiUrl}/api/classes/create/`, {
@@ -391,23 +349,13 @@ export default function ClassesPage() {
               })
             });
             
-            console.log('📡 API Response status:', response.status);
-            
             if (response.ok) {
-              const result = await response.json();
-              console.log('✅ ✅ ✅ SUKCES przez API! Klasa utworzona z ID:', result.class_id);
-              docRef = { id: result.class_id } as any;
+              await response.json();
             } else {
               const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-              console.error('❌ API Error:', errorData);
               throw new Error(errorData.error || 'Błąd API');
             }
-          } catch (apiError: any) {
-            console.error('❌ Błąd API:', apiError);
-            console.error('❌ API Error details:', {
-              message: apiError?.message,
-              stack: apiError?.stack
-            });
+          } catch {
             throw firestoreError; // Rzuć oryginalny błąd Firestore
           }
         } else {
@@ -415,46 +363,15 @@ export default function ClassesPage() {
         }
       }
       
-      // Weryfikuj zapis - odczytaj dokument (tylko jeśli docRef ma id)
-      if (docRef && docRef.id) {
-        try {
-          const verifyDoc = await getDoc(doc(db, 'classes', docRef.id));
-          if (verifyDoc.exists()) {
-            console.log('✅ Weryfikacja: Dokument istnieje w bazie');
-            console.log('📄 Zapisane dane:', verifyDoc.data());
-            
-            // Sprawdź czy wszystkie pola są zapisane poprawnie
-            const savedData = verifyDoc.data();
-            const verificationChecks = {
-              hasTeacherId: !!savedData.teacher_id,
-              teacherIdMatches: savedData.teacher_id === user.uid,
-              hasName: !!savedData.name,
-              hasGradeLevel: !!savedData.grade_level,
-              isActive: savedData.is_active === true
-            };
-            console.log('✅ Weryfikacja pól:', verificationChecks);
-            
-            if (!verificationChecks.teacherIdMatches) {
-              console.error('⚠️ UWAGA: teacher_id nie pasuje do user.uid!');
-            }
-          } else {
-            console.error('❌ Weryfikacja: Dokument nie istnieje!');
-          }
-        } catch (verifyError: any) {
-          console.error('❌ Błąd weryfikacji dokumentu:', verifyError);
-          console.error('❌ Error code:', verifyError?.code);
-          console.error('❌ Error message:', verifyError?.message);
-        }
-      } else {
-        console.warn('⚠️ Nie można zweryfikować - brak docRef.id');
+      // Invalidate cache after creating class
+      if (user?.uid) {
+        sessionStorage.removeItem(`teacher_classes_${user.uid}`);
       }
       
       // Synchronizuj plan zajęć z kalendarzem
       try {
         await syncClassScheduleToCalendar(classData, []);
-        console.log('✅ Plan zajęć zsynchronizowany z kalendarzem');
-      } catch (syncError) {
-        console.error('❌ Błąd synchronizacji planu zajęć:', syncError);
+      } catch {
         // Nie przerywamy procesu tworzenia klasy, tylko logujemy błąd
       }
       
@@ -463,36 +380,10 @@ export default function ClassesPage() {
       resetForm();
       
       // Odśwież listę klas
-      console.log('🔄 Odświeżam listę klas...');
       await fetchClasses();
-      
-      console.log('🎉 ========== CREATE CLASS COMPLETED ==========');
     } catch (error: any) {
-      console.error('❌ ========== ERROR CREATING CLASS ==========');
-      console.error('❌ Error type:', error?.constructor?.name);
-      console.error('❌ Error message:', error?.message);
-      console.error('❌ Error code:', error?.code);
-      console.error('❌ Error details:', error);
-      console.error('❌ Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-      
       // Szczegółowa analiza błędu
       if (error?.code === 'permission-denied') {
-        console.error('🔒 BŁĄD UPRAWNIEŃ - Sprawdź reguły Firestore dla kolekcji "classes"');
-        console.error('📋 Wymagane reguły:');
-        console.error(`
-          match /classes/{classId} {
-            allow read: if request.auth != null;
-            allow create: if request.auth != null && (
-              request.auth.token.role == 'teacher' || 
-              request.auth.token.role == 'admin' ||
-              request.resource.data.teacher_id == request.auth.uid
-            );
-            allow update, delete: if request.auth != null && (
-              request.auth.token.role == 'admin' ||
-              resource.data.teacher_id == request.auth.uid
-            );
-          }
-        `);
         setError('Brak uprawnień do tworzenia klas. Sprawdź reguły Firestore lub skontaktuj się z administratorem.');
       } else if (error?.code === 'unavailable') {
         setError('Firebase jest niedostępny. Sprawdź połączenie z internetem.');
@@ -502,7 +393,6 @@ export default function ClassesPage() {
         setError(`Wystąpił błąd podczas tworzenia klasy: ${error?.message || 'Nieznany błąd'}`);
       }
       
-      console.error('❌ ========== END ERROR ==========');
     }
   };
 
@@ -540,19 +430,21 @@ export default function ClassesPage() {
           id: selectedClass.id
         };
         await syncClassScheduleToCalendar(updatedClassData, selectedClass.students || []);
-        console.log('✅ Plan zajęć zsynchronizowany z kalendarzem po edycji');
-      } catch (syncError) {
-        console.error('❌ Błąd synchronizacji planu zajęć po edycji:', syncError);
+      } catch {
         // Nie przerywamy procesu edycji klasy, tylko logujemy błąd
       }
 
+      // Invalidate cache
+      if (user?.uid) {
+        sessionStorage.removeItem(`teacher_classes_${user.uid}`);
+      }
+      
       setSuccess('Klasa została zaktualizowana pomyślnie!');
       setShowEditModal(false);
       setSelectedClass(null);
       resetForm();
       fetchClasses();
-    } catch (error) {
-      console.error('Error updating class:', error);
+    } catch {
       setError('Wystąpił błąd podczas aktualizacji klasy.');
     }
   };
@@ -562,10 +454,15 @@ export default function ClassesPage() {
 
     try {
       await deleteDoc(doc(db, 'classes', classId));
+      
+      // Invalidate cache
+      if (user?.uid) {
+        sessionStorage.removeItem(`teacher_classes_${user.uid}`);
+      }
+      
       setSuccess('Klasa została usunięta pomyślnie!');
       fetchClasses();
-    } catch (error) {
-      console.error('Error deleting class:', error);
+    } catch {
       setError('Wystąpił błąd podczas usuwania klasy.');
     }
   };
@@ -612,17 +509,14 @@ export default function ClassesPage() {
   // Funkcja synchronizacji planu zajęć z kalendarzem
   const syncClassScheduleToCalendar = async (classData: any, students: string[]) => {
     if (!classData.schedule || classData.schedule.length === 0) {
-      console.log('No schedule to sync for class:', classData.name);
       return;
     }
 
     try {
-      console.log('Syncing schedule to calendar for class:', classData.name);
       
       // Dla każdego slotu planu zajęć
       for (const scheduleSlot of classData.schedule) {
         if (!scheduleSlot.day || !scheduleSlot.time || !scheduleSlot.room) {
-          console.log('Skipping incomplete schedule slot:', scheduleSlot);
           continue;
         }
 
@@ -666,15 +560,12 @@ export default function ClassesPage() {
           recurrenceType: 'weekly'
         };
 
-        console.log('Creating calendar event:', eventData);
         
         // Dodaj wydarzenie do kolekcji events
         await addDoc(collection(db, 'events'), eventData);
       }
 
-      console.log('Schedule synced successfully for class:', classData.name);
-    } catch (error) {
-      console.error('Error syncing schedule to calendar:', error);
+    } catch {
       throw error;
     }
   };
@@ -741,16 +632,13 @@ export default function ClassesPage() {
       try {
         const updatedStudents = [...(selectedClass.students || []), ...selectedStudents];
         await syncClassScheduleToCalendar(selectedClass, updatedStudents);
-        console.log('✅ Plan zajęć zsynchronizowany dla nowych studentów');
-      } catch (syncError) {
-        console.error('❌ Błąd synchronizacji planu zajęć dla studentów:', syncError);
+      } catch {
       }
 
       setSuccess(`${selectedStudents.length} uczniów zostało dodanych do klasy!`);
       resetStudentForm();
       fetchClasses();
-    } catch (error) {
-      console.error('Error adding students to class:', error);
+    } catch {
       setError('Wystąpił błąd podczas dodawania uczniów.');
     }
   };
@@ -764,19 +652,15 @@ export default function ClassesPage() {
   // Funkcja do synchronizacji wszystkich klas z kalendarzem
   const syncAllClassesToCalendar = async () => {
     try {
-      console.log('🔄 Rozpoczynam synchronizację wszystkich klas z kalendarzem...');
       
       for (const classItem of classes) {
         if (classItem.schedule && classItem.schedule.length > 0 && classItem.students && classItem.students.length > 0) {
-          console.log(`Synchronizuję klasę: ${classItem.name}`);
           await syncClassScheduleToCalendar(classItem, classItem.students);
         }
       }
       
       setSuccess('Wszystkie klasy zostały zsynchronizowane z kalendarzem!');
-      console.log('✅ Synchronizacja wszystkich klas zakończona');
-    } catch (error) {
-      console.error('❌ Błąd synchronizacji wszystkich klas:', error);
+    } catch {
       setError('Wystąpił błąd podczas synchronizacji klas z kalendarzem.');
     }
   };
@@ -792,8 +676,7 @@ export default function ClassesPage() {
 
       setSuccess('Uczeń został usunięty z klasy!');
       fetchClasses();
-    } catch (error) {
-      console.error('Error removing student from class:', error);
+    } catch {
       setError('Wystąpił błąd podczas usuwania ucznia.');
     }
   };
@@ -828,8 +711,7 @@ export default function ClassesPage() {
       setSuccess('Kurs został przypisany do klasy i uczniowie zostali automatycznie dodani!');
       resetCourseForm();
       fetchClasses();
-    } catch (error) {
-      console.error('Error assigning course to class:', error);
+    } catch {
       setError('Wystąpił błąd podczas przypisywania kursu.');
     }
   };
@@ -845,8 +727,7 @@ export default function ClassesPage() {
 
       setSuccess('Kurs został usunięty z klasy!');
       fetchClasses();
-    } catch (error) {
-      console.error('Error removing course from class:', error);
+    } catch {
       setError('Wystąpił błąd podczas usuwania kursu.');
     }
   };
@@ -865,14 +746,19 @@ export default function ClassesPage() {
     setShowEditModal(true);
   };
 
-  const filteredClasses = classes.filter((cls) => {
+  // Memoized filtered classes
+  const filteredClasses = useMemo(() => {
+    if (!searchTerm.trim()) return classes;
+    
     const term = searchTerm.toLowerCase();
-    return (
-      cls.name.toLowerCase().includes(term) ||
-      cls.grade_level.toString().includes(term) ||
-      (cls.subject || '').toLowerCase().includes(term)
-    );
-  });
+    return classes.filter((cls) => {
+      return (
+        cls.name.toLowerCase().includes(term) ||
+        cls.grade_level.toString().includes(term) ||
+        (cls.subject || '').toLowerCase().includes(term)
+      );
+    });
+  }, [classes, searchTerm]);
 
   if (loading) {
     return (
@@ -883,9 +769,9 @@ export default function ClassesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-blue-50 w-full max-w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      {/* Header */}
-      <div className="bg-white/90 backdrop-blur-xl border-b border-white/30 shadow-sm">
+    <div className="h-screen bg-blue-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+      {/* Header - Fixed */}
+      <div className="bg-white/90 backdrop-blur-xl border-b border-white/30 shadow-sm flex-shrink-0">
         <div className="px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <button
@@ -916,10 +802,11 @@ export default function ClassesPage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-8">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6">
+        <div className="space-y-6 flex-1 flex flex-col min-h-0">
+          {/* Stats Cards - Fixed */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 flex-shrink-0">
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/30 shadow-sm hover:shadow-md transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -975,8 +862,8 @@ export default function ClassesPage() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/30 shadow-sm">
+          {/* Search - Fixed */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/30 shadow-sm flex-shrink-0">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
               <input
@@ -989,9 +876,9 @@ export default function ClassesPage() {
             </div>
           </div>
 
-          {/* Error/Success Messages */}
+          {/* Error/Success Messages - Fixed */}
           {error && (
-            <div className="bg-red-50 border-2 border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-3">
+            <div className="bg-red-50 border-2 border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-3 flex-shrink-0">
               <div className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center">
                 <span className="text-red-600 text-sm">!</span>
               </div>
@@ -1000,7 +887,7 @@ export default function ClassesPage() {
           )}
 
           {success && (
-            <div className="bg-green-50 border-2 border-green-200 text-green-700 px-6 py-4 rounded-xl flex items-center gap-3">
+            <div className="bg-green-50 border-2 border-green-200 text-green-700 px-6 py-4 rounded-xl flex items-center gap-3 flex-shrink-0">
               <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
                 <span className="text-green-600 text-sm">✓</span>
               </div>
@@ -1008,8 +895,8 @@ export default function ClassesPage() {
             </div>
           )}
 
-          {/* Synchronization Button */}
-          <div className="flex justify-center mb-6">
+          {/* Synchronization Button - Fixed */}
+          <div className="flex justify-center flex-shrink-0">
             <button
               onClick={syncAllClassesToCalendar}
               className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium border border-green-200"
@@ -1020,8 +907,8 @@ export default function ClassesPage() {
             </button>
           </div>
 
-          {/* Classes Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+          {/* Classes Grid - Scrollable */}
+          <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 min-h-0">
             {filteredClasses.map((cls) => (
               <div key={cls.id} className="bg-white/90 backdrop-blur-sm rounded-2xl border border-white/30 p-4 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 transform hover:-translate-y-1 group h-80 flex flex-col">
                 {/* Class Header */}
