@@ -81,6 +81,8 @@ interface Section {
   descriptionFiles?: { url: string; name: string; type: string }[];
   order?: number;
   deadline?: string;
+  start_time?: string; // ISO string - czas rozpoczęcia egzaminu
+  submission_deadline?: string; // ISO string - deadline zakończenia egzaminu
   contents?: SectionContent[];
   subsections?: Subsection[];
   fileUrl?: string;
@@ -212,7 +214,11 @@ function TeacherCourseDetailContent() {
   const [sectionDescription, setSectionDescription] = useState<string>('');
   const [sectionDescriptionFiles, setSectionDescriptionFiles] = useState<File[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState<boolean>(false);
+  const [sectionStartTime, setSectionStartTime] = useState<string>('');
+  const [sectionDeadline, setSectionDeadline] = useState<string>('');
   const [showSectionQuizModal, setShowSectionQuizModal] = useState<number | null>(null);
+  const [saveSectionSuccess, setSaveSectionSuccess] = useState(false);
+  const [quizAssignedSuccess, setQuizAssignedSuccess] = useState(false);
 
   // Nowe zmienne dla zarządzania uczniami
   const [studentSearchTerm, setStudentSearchTerm] = useState<string>("");
@@ -512,6 +518,10 @@ function TeacherCourseDetailContent() {
     
     await saveSectionsToFirestore(courseId, updatedSections);
     await refreshCourseData();
+    
+    // Pokaż toast o sukcesie
+    setQuizAssignedSuccess(true);
+    setTimeout(() => setQuizAssignedSuccess(false), 3000);
   };
 
   const openQuizPreview = (quizId: string) => {
@@ -1024,7 +1034,6 @@ function TeacherCourseDetailContent() {
       name: newSection.name,
       title: newSection.name, // Dodajemy title jako kopię name
       type: newSection.type as "material" | "assignment",
-      deadline: newSection.deadline || undefined,
       contents: []
     };
     // Dodaj submissions: [] tylko dla zadania
@@ -1044,10 +1053,7 @@ function TeacherCourseDetailContent() {
       console.log('New section saved, refreshing data...');
       await refreshCourseData();
       
-      // Automatycznie utwórz event w kalendarzu dla egzaminów
-      if (newSection.type === 'assignment' && newSection.deadline && user?.uid) {
-        await createCalendarEvent(sectionWithSubmissions, courseId, user.uid);
-      }
+      // Event w kalendarzu będzie tworzony później, gdy użytkownik ustawi deadline w edycji sekcji
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections, courseId, newSection, user, saveSectionsToFirestore, refreshCourseData]);
@@ -1178,6 +1184,8 @@ function TeacherCourseDetailContent() {
     setEditingSectionDescription(Number(section.id));
     setSectionDescription(section.description || '');
     setSectionDescriptionFiles([]);
+    setSectionStartTime(section.start_time ? new Date(section.start_time).toISOString().slice(0, 16) : '');
+    setSectionDeadline(section.submission_deadline ? new Date(section.submission_deadline).toISOString().slice(0, 16) : (section.deadline ? new Date(section.deadline).toISOString().slice(0, 16) : ''));
   }, []);
 
   // Zapisz opis sekcji
@@ -1210,27 +1218,56 @@ function TeacherCourseDetailContent() {
       // Połącz istniejące pliki z nowymi
       const allFiles = [...existingFiles, ...uploadedFiles];
       
-      const updatedSections = sections.map(s => 
-        s.id === editingSectionDescription 
-          ? { ...s, description: sectionDescription.trim(), descriptionFiles: allFiles } 
-          : s
-      );
+      // Przygotuj wartości deadline i start_time
+      const startTimeISO = sectionStartTime ? new Date(sectionStartTime).toISOString() : undefined;
+      const deadlineISO = sectionDeadline ? new Date(sectionDeadline).toISOString() : undefined;
+      
+      // Jeśli sekcja ma przypisany quiz, zaktualizuj również quiz
+      if (currentSection?.quizId && (startTimeISO || deadlineISO)) {
+        try {
+          const quizRef = doc(db, 'quizzes', currentSection.quizId);
+          await updateDoc(quizRef, {
+            start_time: startTimeISO || null,
+            submission_deadline: deadlineISO || null
+          });
+        } catch (error) {
+          console.error('Error updating quiz time settings:', error);
+        }
+      }
+      
+      const updatedSections = sections.map(s => {
+        if (s.id === editingSectionDescription) {
+          return { 
+            ...s, 
+            description: sectionDescription.trim(), 
+            descriptionFiles: allFiles,
+            start_time: startTimeISO,
+            submission_deadline: deadlineISO,
+            deadline: deadlineISO // Zachowaj kompatybilność wsteczną
+          };
+        }
+        return s;
+      });
       
       setSections(updatedSections as Section[]);
       setEditingSectionDescription(null);
       setSectionDescription('');
       setSectionDescriptionFiles([]);
+      setSectionStartTime('');
+      setSectionDeadline('');
       
       if (courseId) {
         await saveSectionsToFirestore(courseId, updatedSections);
         await refreshCourseData();
+        setSaveSectionSuccess(true);
+        setTimeout(() => setSaveSectionSuccess(false), 3000);
       }
     } catch {
       alert('Błąd podczas zapisywania opisu i plików');
     } finally {
       setUploadingFiles(false);
     }
-  }, [editingSectionDescription, sectionDescription, sectionDescriptionFiles, sections, courseId, saveSectionsToFirestore, refreshCourseData]);
+  }, [editingSectionDescription, sectionDescription, sectionDescriptionFiles, sectionStartTime, sectionDeadline, sections, courseId, saveSectionsToFirestore, refreshCourseData]);
 
   // Anuluj edycję opisu sekcji
   const handleCancelSectionDescription = useCallback(() => {
@@ -2054,6 +2091,26 @@ function TeacherCourseDetailContent() {
         </div>
       </div>
 
+      {/* Toast notification - Zapisano sekcję */}
+      {saveSectionSuccess && (
+        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-slide-in">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-semibold">Zapisano pomyślnie!</span>
+        </div>
+      )}
+
+      {/* Toast notification - Przypisano quiz */}
+      {quizAssignedSuccess && (
+        <div className="fixed top-4 right-4 z-50 bg-purple-500 text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-slide-in">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-semibold">Przypisano pomyślnie quiz do egzaminu!</span>
+        </div>
+      )}
+
       {/* Picker ikon - poza bannerem, aby nie przysłaniał przycisków */}
       {showIconPicker && (
         <div className="w-full mb-4 relative z-40 bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-blue-500 dark:border-blue-400 shadow-2xl">
@@ -2152,15 +2209,10 @@ function TeacherCourseDetailContent() {
               <button type="button" className="bg-gray-200 px-4 py-2 rounded font-semibold" onClick={() => setAddingSection(false)}>Anuluj</button>
             </div>
             {newSection.type === 'assignment' && (
-              <div className="flex flex-col sm:flex-row gap-2 items-center">
-                <label className="text-sm font-medium text-gray-700">Termin oddania:</label>
-                <input 
-                  type="datetime-local" 
-                  className="border rounded px-3 py-2" 
-                  value={newSection.deadline || ''} 
-                  onChange={e => setNewSection(s => ({...s, deadline: e.target.value}))}
-                  required
-                />
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500 text-center sm:text-left">
+                  ⓘ Uwaga: Pola czasowe (Dostępny od i Dostępny do) można ustawić w edycji sekcji po jej utworzeniu.
+                </p>
               </div>
             )}
           </form>
@@ -2227,10 +2279,27 @@ function TeacherCourseDetailContent() {
                   <span className="text-base font-normal ml-2">
                     ({section.type === 'assignment' ? 'Egzamin' : 'Materiał'})
                   </span>
-                  {section.type === 'assignment' && section.deadline && (
-                    <span className="block text-sm font-normal text-gray-600">
-                      Termin: {new Date(section.deadline).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '/')}
-                    </span>
+                  {section.type === 'assignment' && (section.start_time || section.submission_deadline || section.deadline) && (
+                    <div className="block text-sm font-normal text-gray-600 space-y-1">
+                      {section.start_time && (
+                        <span>⏰ Od: {new Date(section.start_time).toLocaleString('pl-PL', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}</span>
+                      )}
+                      {(section.submission_deadline || section.deadline) && (
+                        <span className="block">⏱️ Do: {new Date(section.submission_deadline || section.deadline!).toLocaleString('pl-PL', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -2335,24 +2404,79 @@ function TeacherCourseDetailContent() {
                 {/* Formularz edycji opisu sekcji (tylko dla egzaminów) */}
                 {section.type === 'assignment' && editingSectionDescription === Number(section.id) && (
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 mb-4">
-                    <h4 className="font-semibold text-blue-800 mb-3">Dodaj opis egzaminu</h4>
-                    <div className="space-y-3">
-                      <textarea
-                        placeholder="Opis egzaminu..."
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none overflow-hidden transition-all duration-200"
-                        style={{ minHeight: '100px' }}
-                        value={sectionDescription}
-                        onChange={e => {
-                          setSectionDescription(e.target.value);
-                          autoResizeTextarea(e.target);
-                        }}
-                        onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
-                        ref={(el) => {
-                          if (el && sectionDescription) {
-                            setTimeout(() => autoResizeTextarea(el), 0);
-                          }
-                        }}
-                      />
+                    <h4 className="font-semibold text-blue-800 mb-4">Edytuj egzamin</h4>
+                    <div className="space-y-4">
+                      {/* Pola czasowe - Start Time i Deadline - NA GÓRZE */}
+                      <div className="bg-white p-4 rounded-lg border-2 border-blue-300 shadow-sm">
+                        <h5 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Ustawienia czasowe egzaminu
+                        </h5>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Dostępny od (Start Time)
+                            </label>
+                            <input
+                              type="datetime-local"
+                              value={sectionStartTime}
+                              onChange={(e) => setSectionStartTime(e.target.value)}
+                              className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Data i godzina, od której egzamin będzie dostępny</p>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Dostępny do (Deadline) *
+                            </label>
+                            <input
+                              type="datetime-local"
+                              value={sectionDeadline}
+                              onChange={(e) => setSectionDeadline(e.target.value)}
+                              className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                              required
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Ostateczny termin zakończenia egzaminu</p>
+                          </div>
+                        </div>
+                        
+                        {/* Walidacja deadline */}
+                        {sectionStartTime && sectionDeadline && new Date(sectionDeadline) <= new Date(sectionStartTime) && (
+                          <div className="mt-3 p-3 bg-red-50 border-2 border-red-300 rounded-lg">
+                            <p className="text-red-700 text-sm font-semibold flex items-center gap-2">
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                              </svg>
+                              Deadline musi być późniejszy niż czas rozpoczęcia!
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Opis egzaminu */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Opis egzaminu
+                        </label>
+                        <textarea
+                          placeholder="Opis egzaminu..."
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none overflow-hidden transition-all duration-200"
+                          style={{ minHeight: '100px' }}
+                          value={sectionDescription}
+                          onChange={e => {
+                            setSectionDescription(e.target.value);
+                            autoResizeTextarea(e.target);
+                          }}
+                          onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                          ref={(el) => {
+                            if (el && sectionDescription) {
+                              setTimeout(() => autoResizeTextarea(el), 0);
+                            }
+                          }}
+                        />
+                      </div>
                       
                       {/* Input do załączania plików */}
                       <div>
@@ -2470,11 +2594,34 @@ function TeacherCourseDetailContent() {
                 {section.type === 'assignment' && section.quizId && (
                   <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
                     <div className="flex items-center justify-between">
-                      <div>
+                      <div className="flex-1">
                         <p className="text-sm text-gray-600 mb-1">Przypisany quiz:</p>
                         <p className="font-semibold text-purple-800">
                           {quizzes.find(q => q.id === section.quizId)?.title || 'Quiz (ID: ' + section.quizId + ')'}
                         </p>
+                        {/* Wyświetl informacje o czasie */}
+                        {(section.start_time || section.submission_deadline) && (
+                          <div className="mt-2 space-y-1 text-xs text-gray-600">
+                            {section.start_time && (
+                              <p>⏰ Dostępny od: {new Date(section.start_time).toLocaleString('pl-PL', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</p>
+                            )}
+                            {section.submission_deadline && (
+                              <p>⏱️ Deadline: {new Date(section.submission_deadline).toLocaleString('pl-PL', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <button

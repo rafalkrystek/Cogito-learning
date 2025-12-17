@@ -34,6 +34,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
   const [showSidebarSection, setShowSidebarSection] = useState<{[id: string]: boolean}>({});
   const [quizTitles, setQuizTitles] = useState<{[quizId: string]: string}>({});
   const [quizAttempts, setQuizAttempts] = useState<{[quizId: string]: number}>({});
+  const [showExamModal, setShowExamModal] = useState<{show: boolean; message: string; type: 'before' | 'after' | null}>({show: false, message: '', type: null});
 
   // Pobierz nazwy quizów
   useEffect(() => {
@@ -163,7 +164,7 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
     });
 
     return {
-      sections: totalSections,
+      sections: totalSections - totalExams, // Liczba sekcji bez egzaminów (tylko materiały)
       lessons: totalLessons,
       exams: totalExams,
       quizzes: quizzes.length
@@ -178,7 +179,10 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
         id: section.id,
         name: section.name,
         deadline: section.deadline,
-        description: section.description
+        start_time: section.start_time,
+        submission_deadline: section.submission_deadline,
+        description: section.description,
+        quizId: section.quizId
       }));
   }, [sections]);
 
@@ -467,13 +471,13 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
               </div>
 
               <div className="p-6 space-y-4">
-                {sections.length === 0 ? (
+                {sections.filter((s: any) => s.type !== 'assignment').length === 0 ? (
                   <div className="text-center py-12 text-gray-500">
                     <BookOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                     <p>Brak rozdziałów w tym kursie</p>
                   </div>
                 ) : (
-                  sections.map((section: any) => (
+                  sections.filter((s: any) => s.type !== 'assignment').map((section: any) => (
                     <div
                       key={section.id}
                       id={`section-${section.id}`}
@@ -498,10 +502,31 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                             <span className="text-sm text-gray-600">
                               ({section.type === 'assignment' ? 'Egzamin' : 'Materiał'})
                             </span>
-                            {section.type === 'assignment' && section.deadline && (
-                              <span className="ml-2 text-sm text-red-600">
-                                • Termin: {new Date(section.deadline).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '/')}
-                              </span>
+                            {section.type === 'assignment' && (section.start_time || section.submission_deadline || section.deadline) && (
+                              <div className="ml-2 text-sm space-y-1">
+                                {section.start_time && (
+                                  <span className="block text-blue-600">
+                                    • Od: {new Date(section.start_time).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                )}
+                                {(section.submission_deadline || section.deadline) && (
+                                  <span className="block text-red-600">
+                                    • Do: {new Date(section.submission_deadline || section.deadline).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -811,33 +836,88 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                   })()}
 
                                   {/* Quiz */}
-                                  {block.type === 'quiz' && block.quizId && (
-                                    <div className="mt-3 p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 rounded-xl shadow-sm">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                          <div className="bg-orange-100 p-3 rounded-lg">
-                                            <HelpCircle className="h-6 w-6 text-orange-600" />
+                                  {block.type === 'quiz' && block.quizId && (() => {
+                                    const quiz = quizzes.find((q: any) => q.id === block.quizId);
+                                    // Logika czasowa
+                                    const now = new Date();
+                                    const startTime = quiz?.start_time ? new Date(quiz.start_time) : null;
+                                    const deadline = quiz?.submission_deadline ? new Date(quiz.submission_deadline) : null;
+                                    
+                                    let timeStatus: 'before' | 'available' | 'after' = 'available';
+                                    let timeMessage: string | null = null;
+                                    
+                                    if (deadline) {
+                                      if (startTime && now < startTime) {
+                                        timeStatus = 'before';
+                                        timeMessage = `Dostępny od: ${startTime.toLocaleString('pl-PL', { 
+                                          day: '2-digit', 
+                                          month: '2-digit', 
+                                          year: 'numeric',
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}`;
+                                      } else if (now > deadline) {
+                                        timeStatus = 'after';
+                                        timeMessage = 'Czas minął';
+                                      }
+                                    }
+                                    
+                                    const isTimeBlocked = timeStatus === 'before' || timeStatus === 'after';
+                                    const isAttemptsExceeded = (quizAttempts[block.quizId] || 0) >= (quiz?.max_attempts || 1);
+                                    const isButtonDisabled = isAttemptsExceeded || isTimeBlocked;
+
+                                    return (
+                                      <div className="mt-3 p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 rounded-xl shadow-sm">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-3 flex-1">
+                                            <div className="bg-orange-100 p-3 rounded-lg">
+                                              <HelpCircle className="h-6 w-6 text-orange-600" />
+                                            </div>
+                                            <div className="flex-1">
+                                              <p className="font-semibold text-gray-900">
+                                                {quizTitles[block.quizId] || quiz?.title || 'Wczytywanie...'}
+                                              </p>
+                                              {/* Opis zawsze widoczny */}
+                                              {quiz?.description && (
+                                                <p className="text-xs text-gray-600 mt-1">{quiz.description}</p>
+                                              )}
+                                              <p className="text-xs text-gray-500">
+                                                Quiz • Próby: {quizAttempts[block.quizId] || 0}/{quiz?.max_attempts || 1}
+                                              </p>
+                                              {/* Komunikaty czasowe */}
+                                              {timeMessage && (
+                                                <div className={`mt-2 p-2 rounded-lg text-xs ${
+                                                  timeStatus === 'before' 
+                                                    ? 'bg-yellow-50 border border-yellow-200 text-yellow-800'
+                                                    : 'bg-red-50 border border-red-200 text-red-800'
+                                                }`}>
+                                                  {timeStatus === 'before' ? '⏰' : '❌'} {timeMessage}
+                                                </div>
+                                              )}
+                                            </div>
                                           </div>
-                                          <div>
-                                            <p className="font-semibold text-gray-900">
-                                              {quizTitles[block.quizId] || 'Wczytywanie...'}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                              Quiz • Próby: {quizAttempts[block.quizId] || 0}
-                                            </p>
-                                          </div>
+                                          {!isTeacherPreview && (
+                                            <a
+                                              href={isButtonDisabled ? '#' : `/courses/${course?.slug || course?.id}/quiz/${block.quizId}`}
+                                              onClick={(e) => isButtonDisabled && e.preventDefault()}
+                                              className={`px-6 py-3 rounded-lg transition-all shadow-md hover:shadow-lg font-medium ${
+                                                isButtonDisabled
+                                                  ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                                                  : 'bg-orange-600 text-white hover:bg-orange-700'
+                                              }`}
+                                            >
+                                              {isTimeBlocked 
+                                                ? (timeStatus === 'before' ? 'Niedostępny' : 'Czas minął')
+                                                : isAttemptsExceeded 
+                                                  ? 'Wykorzystano próby' 
+                                                  : 'Rozpocznij Quiz'
+                                              }
+                                            </a>
+                                          )}
                                         </div>
-                                        {!isTeacherPreview && (
-                                          <a
-                                            href={`/courses/${course?.slug || course?.id}/quiz/${block.quizId}`}
-                                            className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-all shadow-md hover:shadow-lg font-medium"
-                                          >
-                                            Rozpocznij quiz
-                                          </a>
-                                        )}
                                       </div>
-                                    </div>
-                                  )}
+                                    );
+                                  })()}
                                 </div>
                                 );
                               });
@@ -1228,33 +1308,88 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                                           })()}
 
                                           {/* Quiz */}
-                                          {blockType === 'quiz' && block.quizId && (
-                                            <div className="mt-3 p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 rounded-xl shadow-sm">
-                                              <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                  <div className="bg-orange-100 p-3 rounded-lg">
-                                                    <HelpCircle className="h-6 w-6 text-orange-600" />
+                                          {blockType === 'quiz' && block.quizId && (() => {
+                                            const quiz = quizzes.find((q: any) => q.id === block.quizId);
+                                            // Logika czasowa
+                                            const now = new Date();
+                                            const startTime = quiz?.start_time ? new Date(quiz.start_time) : null;
+                                            const deadline = quiz?.submission_deadline ? new Date(quiz.submission_deadline) : null;
+                                            
+                                            let timeStatus: 'before' | 'available' | 'after' = 'available';
+                                            let timeMessage: string | null = null;
+                                            
+                                            if (deadline) {
+                                              if (startTime && now < startTime) {
+                                                timeStatus = 'before';
+                                                timeMessage = `Dostępny od: ${startTime.toLocaleString('pl-PL', { 
+                                                  day: '2-digit', 
+                                                  month: '2-digit', 
+                                                  year: 'numeric',
+                                                  hour: '2-digit',
+                                                  minute: '2-digit'
+                                                })}`;
+                                              } else if (now > deadline) {
+                                                timeStatus = 'after';
+                                                timeMessage = 'Czas minął';
+                                              }
+                                            }
+                                            
+                                            const isTimeBlocked = timeStatus === 'before' || timeStatus === 'after';
+                                            const isAttemptsExceeded = (quizAttempts[block.quizId] || 0) >= (quiz?.max_attempts || 1);
+                                            const isButtonDisabled = isAttemptsExceeded || isTimeBlocked;
+
+                                            return (
+                                              <div className="mt-3 p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 rounded-xl shadow-sm">
+                                                <div className="flex items-center justify-between">
+                                                  <div className="flex items-center gap-3 flex-1">
+                                                    <div className="bg-orange-100 p-3 rounded-lg">
+                                                      <HelpCircle className="h-6 w-6 text-orange-600" />
+                                                    </div>
+                                                    <div className="flex-1">
+                                                      <p className="font-semibold text-gray-900">
+                                                        {quizTitles[block.quizId] || quiz?.title || 'Wczytywanie...'}
+                                                      </p>
+                                                      {/* Opis zawsze widoczny */}
+                                                      {quiz?.description && (
+                                                        <p className="text-xs text-gray-600 mt-1">{quiz.description}</p>
+                                                      )}
+                                                      <p className="text-xs text-gray-500">
+                                                        Quiz • Próby: {quizAttempts[block.quizId] || 0}/{quiz?.max_attempts || 1}
+                                                      </p>
+                                                      {/* Komunikaty czasowe */}
+                                                      {timeMessage && (
+                                                        <div className={`mt-2 p-2 rounded-lg text-xs ${
+                                                          timeStatus === 'before' 
+                                                            ? 'bg-yellow-50 border border-yellow-200 text-yellow-800'
+                                                            : 'bg-red-50 border border-red-200 text-red-800'
+                                                        }`}>
+                                                          {timeStatus === 'before' ? '⏰' : '❌'} {timeMessage}
+                                                        </div>
+                                                      )}
+                                                    </div>
                                                   </div>
-                                                  <div>
-                                                    <p className="font-semibold text-gray-900">
-                                                      {quizTitles[block.quizId] || 'Wczytywanie...'}
-                                                    </p>
-                                                    <p className="text-xs text-gray-500">
-                                                      Quiz • Próby: {quizAttempts[block.quizId] || 0}
-                                                    </p>
-                                                  </div>
+                                                  {!isTeacherPreview && (
+                                                    <a
+                                                      href={isButtonDisabled ? '#' : `/courses/${course?.slug || course?.id}/quiz/${block.quizId}`}
+                                                      onClick={(e) => isButtonDisabled && e.preventDefault()}
+                                                      className={`px-6 py-3 rounded-lg transition-all shadow-md hover:shadow-lg font-medium ${
+                                                        isButtonDisabled
+                                                          ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                                                          : 'bg-orange-600 text-white hover:bg-orange-700'
+                                                      }`}
+                                                    >
+                                                      {isTimeBlocked 
+                                                        ? (timeStatus === 'before' ? 'Niedostępny' : 'Czas minął')
+                                                        : isAttemptsExceeded 
+                                                          ? 'Wykorzystano próby' 
+                                                          : 'Rozpocznij Quiz'
+                                                      }
+                                                    </a>
+                                                  )}
                                                 </div>
-                                                {!isTeacherPreview && (
-                                                  <a
-                                                    href={`/courses/${course?.slug || course?.id}/quiz/${block.quizId}`}
-                                                    className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-all shadow-md hover:shadow-lg font-medium"
-                                                  >
-                                                    Rozpocznij quiz
-                                                  </a>
-                                                )}
                                               </div>
-                                            </div>
-                                          )}
+                                            );
+                                          })()}
                                         </div>
                                         );
                                       })
@@ -1295,37 +1430,198 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {exams.map((exam: any) => (
-                                  <div
-                                    key={exam.id}
-                                    className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all hover:scale-[1.02]"
-                                  >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <GraduationCap className="h-5 w-5 text-purple-600" />
-                            <h3 className="text-lg font-semibold text-gray-900">{exam.name}</h3>
-                          </div>
-                          {exam.description && (
-                            <p className="text-gray-600 mb-3">{exam.description}</p>
-                          )}
-                          {exam.deadline && (
-                            <div className="flex items-center gap-2 text-sm">
-                              <Calendar className="h-4 w-4 text-red-600" />
-                              <span className="text-red-600 font-medium">
-                                Termin: {new Date(exam.deadline).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '/')}
-                              </span>
+                  {exams.map((exam: any) => {
+                    // Oblicz status egzaminu
+                    const now = new Date();
+                    const startTime = exam.start_time ? new Date(exam.start_time) : null;
+                    const deadline = exam.submission_deadline || exam.deadline ? new Date(exam.submission_deadline || exam.deadline) : null;
+                    
+                    let examStatus: 'before' | 'available' | 'after' | 'not_set' = 'not_set';
+                    let statusMessage = '';
+                    let statusColor = 'gray';
+                    
+                    // Funkcja pomocnicza do obliczania komunikatu "za X"
+                    const getTimeUntilMessage = (targetTime: Date) => {
+                      const diffMs = targetTime.getTime() - now.getTime();
+                      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                      
+                      if (diffDays > 0) {
+                        return `Egzamin dostępny za ${diffDays} ${diffDays === 1 ? 'dzień' : diffDays < 5 ? 'dni' : 'dni'}`;
+                      } else if (diffHours > 0) {
+                        return `Egzamin dostępny za ${diffHours} ${diffHours === 1 ? 'godzinę' : diffHours < 5 ? 'godziny' : 'godzin'}`;
+                      } else if (diffMinutes > 0) {
+                        return `Egzamin dostępny za ${diffMinutes} ${diffMinutes === 1 ? 'minutę' : diffMinutes < 5 ? 'minuty' : 'minut'}`;
+                      } else {
+                        return 'Egzamin dostępny za chwilę';
+                      }
+                    };
+                    
+                    // Sprawdź najpierw czy jest startTime i czy już minął
+                    if (startTime && now < startTime) {
+                      examStatus = 'before';
+                      statusMessage = getTimeUntilMessage(startTime);
+                      statusColor = 'yellow';
+                    } 
+                    // Jeśli startTime minął lub nie ma startTime, sprawdź deadline
+                    else if (deadline && now > deadline) {
+                      examStatus = 'after';
+                      statusMessage = 'Egzamin niedostępny';
+                      statusColor = 'red';
+                    }
+                    // Jeśli jest startTime i deadline, sprawdź czy jesteśmy w oknie czasowym
+                    else if (startTime && deadline) {
+                      if (now >= startTime && now <= deadline) {
+                        examStatus = 'available';
+                        statusMessage = 'Egzamin dostępny';
+                        statusColor = 'green';
+                      } else {
+                        // Ten przypadek nie powinien się zdarzyć (już obsłużony wyżej), ale na wszelki wypadek
+                        examStatus = 'after';
+                        statusMessage = 'Egzamin niedostępny';
+                        statusColor = 'red';
+                      }
+                    }
+                    // Jeśli jest tylko startTime (bez deadline) i minął
+                    else if (startTime && now >= startTime) {
+                      examStatus = 'available';
+                      statusMessage = 'Egzamin dostępny';
+                      statusColor = 'green';
+                    }
+                    // Jeśli jest tylko deadline i jeszcze nie minął
+                    else if (deadline && now <= deadline) {
+                      examStatus = 'available';
+                      statusMessage = 'Egzamin dostępny';
+                      statusColor = 'green';
+                    }
+                    // Jeśli nie ma żadnych ograniczeń czasowych
+                    else if (!startTime && !deadline) {
+                      examStatus = 'available';
+                      statusMessage = 'Egzamin dostępny';
+                      statusColor = 'green';
+                    }
+                    
+                    // Przycisk aktywny TYLKO gdy egzamin jest dostępny (nie przed, nie po, nie not_set)
+                    const canOpenExam = examStatus === 'available';
+                    
+                    return (
+                      <div
+                        key={exam.id}
+                        className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all hover:scale-[1.02]"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <GraduationCap className="h-5 w-5 text-purple-600" />
+                              <h3 className="text-lg font-semibold text-gray-900">{exam.name}</h3>
                             </div>
+                            {exam.description && (
+                              <p className="text-gray-600 mb-3">{exam.description}</p>
+                            )}
+                            {/* Status egzaminu */}
+                            {statusMessage && (
+                              <div className={`mb-3 px-3 py-2 rounded-lg ${
+                                statusColor === 'green' ? 'bg-green-50 border border-green-200' :
+                                statusColor === 'yellow' ? 'bg-yellow-50 border border-yellow-200' :
+                                statusColor === 'red' ? 'bg-red-50 border border-red-200' :
+                                'bg-gray-50 border border-gray-200'
+                              }`}>
+                                <span className={`text-sm font-medium ${
+                                  statusColor === 'green' ? 'text-green-700' :
+                                  statusColor === 'yellow' ? 'text-yellow-700' :
+                                  statusColor === 'red' ? 'text-red-700' :
+                                  'text-gray-700'
+                                }`}>
+                                  {statusMessage}
+                                </span>
+                              </div>
+                            )}
+                            {/* Wyświetl informacje o czasie - start_time i submission_deadline */}
+                            <div className="space-y-2 mt-2">
+                              {exam.start_time && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Calendar className="h-4 w-4 text-blue-600" />
+                                  <span className="text-blue-600 font-medium">
+                                    Dostępny od: {new Date(exam.start_time).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                </div>
+                              )}
+                              {(exam.submission_deadline || exam.deadline) && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Calendar className="h-4 w-4 text-red-600" />
+                                  <span className="text-red-600 font-medium">
+                                    Dostępny do: {new Date(exam.submission_deadline || exam.deadline).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {!isTeacherPreview && (
+                            <button 
+                              onClick={() => {
+                                if (!exam.quizId) {
+                                  alert('Egzamin nie ma przypisanego quizu. Skontaktuj się z nauczycielem.');
+                                  return;
+                                }
+                                
+                                if (examStatus === 'before') {
+                                  setShowExamModal({
+                                    show: true,
+                                    message: `Egzamin będzie dostępny od ${new Date(exam.start_time).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}`,
+                                    type: 'before'
+                                  });
+                                  return;
+                                }
+                                
+                                if (examStatus === 'after') {
+                                  setShowExamModal({
+                                    show: true,
+                                    message: `Czas na wykonanie egzaminu minął. Termin zakończył się ${new Date(exam.submission_deadline || exam.deadline).toLocaleString('pl-PL', { 
+                                      day: '2-digit', 
+                                      month: '2-digit', 
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}`,
+                                    type: 'after'
+                                  });
+                                  return;
+                                }
+                                
+                                router.push(`/courses/${course?.slug || course?.id}/quiz/${exam.quizId}`);
+                              }}
+                              className={`px-6 py-2 rounded-lg transition-colors ${
+                                canOpenExam
+                                  ? 'bg-purple-600 text-white hover:bg-purple-700'
+                                  : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                              }`}
+                            >
+                              Otwórz egzamin
+                            </button>
                           )}
                         </div>
-                        {!isTeacherPreview && (
-                          <button className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors">
-                            Otwórz egzamin
-                          </button>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1349,49 +1645,93 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {quizzes.map((quiz: any) => (
-                    <div
-                      key={quiz.id}
-                      className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all hover:scale-[1.02]"
-                    >
-                      <div className="flex items-start gap-3 mb-3">
-                        <div className="bg-orange-100 p-2 rounded-lg">
-                          <HelpCircle className="h-5 w-5 text-orange-600" />
+                  {quizzes.map((quiz: any) => {
+                    // Logika czasowa
+                    const now = new Date();
+                    const startTime = quiz.start_time ? new Date(quiz.start_time) : null;
+                    const deadline = quiz.submission_deadline ? new Date(quiz.submission_deadline) : null;
+                    
+                    let timeStatus: 'before' | 'available' | 'after' = 'available';
+                    let timeMessage: string | null = null;
+                    
+                    if (deadline) {
+                      if (startTime && now < startTime) {
+                        timeStatus = 'before';
+                        timeMessage = `Dostępny od: ${startTime.toLocaleString('pl-PL', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}`;
+                      } else if (now > deadline) {
+                        timeStatus = 'after';
+                        timeMessage = 'Czas minął';
+                      }
+                    }
+                    
+                    const isTimeBlocked = timeStatus === 'before' || timeStatus === 'after';
+                    const isAttemptsExceeded = (quizAttempts[quiz.id] || 0) >= (quiz.max_attempts || 1);
+                    const isButtonDisabled = isAttemptsExceeded || isTimeBlocked;
+
+                    return (
+                      <div
+                        key={quiz.id}
+                        className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all hover:scale-[1.02]"
+                      >
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="bg-orange-100 p-2 rounded-lg">
+                            <HelpCircle className="h-5 w-5 text-orange-600" />
+                          </div>
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-gray-900">{quiz.title}</h3>
+                            {/* Opis zawsze widoczny */}
+                            {quiz.description && (
+                              <p className="text-sm text-gray-600 mt-1">{quiz.description}</p>
+                            )}
+                            {/* Komunikaty czasowe */}
+                            {timeMessage && (
+                              <div className={`mt-2 p-2 rounded-lg text-xs ${
+                                timeStatus === 'before' 
+                                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-800'
+                                  : 'bg-red-50 border border-red-200 text-red-800'
+                              }`}>
+                                {timeStatus === 'before' ? '⏰' : '❌'} {timeMessage}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-900">{quiz.title}</h3>
-                          {quiz.description && (
-                            <p className="text-sm text-gray-600 mt-1">{quiz.description}</p>
+                        <div className="flex items-center justify-between mt-4">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm text-gray-600">
+                              {quiz.questions?.length || 0} pytań
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Próby: {quizAttempts[quiz.id] || 0}/{quiz.max_attempts || 1}
+                            </span>
+                          </div>
+                          {!isTeacherPreview && (
+                            <a
+                              href={isButtonDisabled ? '#' : `/courses/${course?.slug || course?.id}/quiz/${quiz.id}`}
+                              onClick={(e) => isButtonDisabled && e.preventDefault()}
+                              className={`px-4 py-2 rounded-lg transition-colors text-sm inline-block ${
+                                isButtonDisabled
+                                  ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                                  : 'bg-orange-600 text-white hover:bg-orange-700'
+                              }`}
+                            >
+                              {isTimeBlocked 
+                                ? (timeStatus === 'before' ? 'Niedostępny' : 'Czas minął')
+                                : isAttemptsExceeded 
+                                  ? 'Wykorzystano próby' 
+                                  : 'Rozpocznij Quiz'
+                              }
+                            </a>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center justify-between mt-4">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-sm text-gray-600">
-                            {quiz.questions?.length || 0} pytań
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            Próby: {quizAttempts[quiz.id] || 0}/{quiz.max_attempts || 1}
-                          </span>
-                        </div>
-                        {!isTeacherPreview && (
-                          <a
-                            href={`/courses/${course?.slug || course?.id}/quiz/${quiz.id}`}
-                            className={`px-4 py-2 rounded-lg transition-colors text-sm inline-block ${
-                              (quizAttempts[quiz.id] || 0) >= (quiz.max_attempts || 1)
-                                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                                : 'bg-orange-600 text-white hover:bg-orange-700'
-                            }`}
-                          >
-                            {(quizAttempts[quiz.id] || 0) >= (quiz.max_attempts || 1) 
-                              ? 'Wykorzystano próby' 
-                              : 'Rozpocznij quiz'
-                            }
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1399,6 +1739,42 @@ export const CourseViewShared: React.FC<CourseViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modal dla próby wejścia przed/po terminie */}
+      {showExamModal.show && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900">
+                {showExamModal.type === 'before' ? 'Egzamin jeszcze niedostępny' : 'Egzamin niedostępny'}
+              </h3>
+              <button
+                onClick={() => setShowExamModal({show: false, message: '', type: null})}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className={`p-4 rounded-lg mb-4 ${
+              showExamModal.type === 'before' ? 'bg-yellow-50 border border-yellow-200' : 'bg-red-50 border border-red-200'
+            }`}>
+              <p className={`text-sm ${
+                showExamModal.type === 'before' ? 'text-yellow-800' : 'text-red-800'
+              }`}>
+                {showExamModal.message}
+              </p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowExamModal({show: false, message: '', type: null})}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Rozumiem
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

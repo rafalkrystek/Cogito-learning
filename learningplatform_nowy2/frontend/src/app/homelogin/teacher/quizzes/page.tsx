@@ -106,6 +106,8 @@ interface NewQuiz {
   questions: LocalQuestion[];
   max_attempts: number;
   time_limit: number;
+  start_time?: string; // ISO string
+  submission_deadline?: string; // ISO string
 }
 
 export default function QuizManagementPage() {
@@ -126,7 +128,10 @@ export default function QuizManagementPage() {
     questions: [],
     max_attempts: 1,
     time_limit: 30,
+    start_time: '',
+    submission_deadline: '',
   });
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const [selectedQuiz, setSelectedQuiz] = useState<LocalQuiz | null>(null);
@@ -270,6 +275,14 @@ export default function QuizManagementPage() {
       return;
     }
 
+    // Walidacja deadline
+    if (newQuiz.start_time && newQuiz.submission_deadline) {
+      if (new Date(newQuiz.submission_deadline) <= new Date(newQuiz.start_time)) {
+        setError('Deadline musi być późniejszy niż czas rozpoczęcia');
+        return;
+      }
+    }
+
     let quizData: any = null;
     
     try {
@@ -313,7 +326,9 @@ export default function QuizManagementPage() {
         created_by: user?.email,
         created_at: serverTimestamp(),
         course_title: selectedCourse.title,
-        course_id: selectedCourse.id
+        course_id: selectedCourse.id,
+        start_time: newQuiz.start_time || null,
+        submission_deadline: newQuiz.submission_deadline || null,
       };
 
       console.log('Saving quiz data:', quizData);
@@ -325,6 +340,8 @@ export default function QuizManagementPage() {
       }
       
       setIsCreating(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
       setNewQuiz({
         title: '',
         description: '',
@@ -333,6 +350,8 @@ export default function QuizManagementPage() {
         questions: [],
         max_attempts: 1,
         time_limit: 30,
+        start_time: '',
+        submission_deadline: '',
       });
       setCurrentPage(1);
       fetchQuizzes();
@@ -394,6 +413,8 @@ export default function QuizManagementPage() {
       })),
       max_attempts: quiz.max_attempts || 1,
       time_limit: quiz.time_limit || 30,
+      start_time: (quiz as any).start_time || '',
+      submission_deadline: (quiz as any).submission_deadline || '',
     };
 
     console.log('Imported quiz:', importedQuiz);
@@ -412,6 +433,8 @@ export default function QuizManagementPage() {
       questions: quiz.questions,
       max_attempts: quiz.max_attempts,
       time_limit: quiz.time_limit || 30,
+      start_time: (quiz as any).start_time || '',
+      submission_deadline: (quiz as any).submission_deadline || '',
     });
     setIsEditing(true);
     setIsCreating(false);
@@ -426,6 +449,14 @@ export default function QuizManagementPage() {
     if (!editingQuiz || !newQuiz.course_id) {
       setError('Proszę wybrać kurs dla tego quizu');
       return;
+    }
+
+    // Walidacja deadline
+    if (newQuiz.start_time && newQuiz.submission_deadline) {
+      if (new Date(newQuiz.submission_deadline) <= new Date(newQuiz.start_time)) {
+        setError('Deadline musi być późniejszy niż czas rozpoczęcia');
+        return;
+      }
     }
 
     let quizData: any = null;
@@ -471,7 +502,9 @@ export default function QuizManagementPage() {
         questions: convertedQuestions,
         updated_at: serverTimestamp(),
         course_title: selectedCourse.title,
-        course_id: selectedCourse.id
+        course_id: selectedCourse.id,
+        start_time: newQuiz.start_time || null,
+        submission_deadline: newQuiz.submission_deadline || null,
       };
 
       console.log('Updating quiz data:', quizData);
@@ -492,6 +525,8 @@ export default function QuizManagementPage() {
         questions: [],
         max_attempts: 1,
         time_limit: 30,
+        start_time: '',
+        submission_deadline: '',
       });
       fetchQuizzes();
     } catch (error) {
@@ -630,6 +665,7 @@ export default function QuizManagementPage() {
     setEditingQuiz(null);
     setEditingQuestionIndex(null);
     setShowExitConfirm(false);
+    setSaveSuccess(false);
     setNewQuiz({
       title: '',
       description: '',
@@ -638,6 +674,8 @@ export default function QuizManagementPage() {
       questions: [],
       max_attempts: 1,
       time_limit: 30,
+      start_time: '',
+      submission_deadline: '',
     });
   };
 
@@ -673,6 +711,13 @@ export default function QuizManagementPage() {
 
   return (
     <div className="w-full h-full bg-gray-50 overflow-x-hidden" style={{ maxWidth: '100vw' }}>
+      {/* Toast notification */}
+      {saveSuccess && (
+        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-slide-in">
+          <CheckCircle className="w-6 h-6" />
+          <span className="font-semibold">Zapisano pomyślnie!</span>
+        </div>
+      )}
       <div className="w-full h-full p-6 flex flex-col">
         {/* Main Page Header */}
         <div className="relative overflow-hidden mb-8 flex-shrink-0">
@@ -927,6 +972,64 @@ export default function QuizManagementPage() {
                 </p>
               </div>
             </div>
+
+            {/* Pola czasowe - Start Time i Deadline */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              <div className="group">
+                <label className="block text-sm font-semibold text-blue-700 mb-2 flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  Dostępny od (Start Time)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={newQuiz.start_time ? new Date(newQuiz.start_time).toISOString().slice(0, 16) : ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewQuiz((prev) => ({ 
+                      ...prev, 
+                      start_time: value ? new Date(value).toISOString() : '' 
+                    }));
+                  }}
+                  className="w-full p-4 border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all duration-300"
+                />
+                <p className="text-sm text-gray-500 mt-2">
+                  Data i godzina, od której egzamin będzie dostępny (opcjonalnie)
+                </p>
+              </div>
+              
+              <div className="group">
+                <label className="block text-sm font-semibold text-red-700 mb-2 flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  Dostępny do (Deadline) *
+                </label>
+                <input
+                  type="datetime-local"
+                  value={newQuiz.submission_deadline ? new Date(newQuiz.submission_deadline).toISOString().slice(0, 16) : ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewQuiz((prev) => ({ 
+                      ...prev, 
+                      submission_deadline: value ? new Date(value).toISOString() : '' 
+                    }));
+                  }}
+                  className="w-full p-4 border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-red-100 focus:border-red-500 transition-all duration-300"
+                  required
+                />
+                <p className="text-sm text-gray-500 mt-2">
+                  Ostateczny termin zakończenia egzaminu
+                </p>
+              </div>
+            </div>
+            
+            {/* Walidacja deadline */}
+            {newQuiz.start_time && newQuiz.submission_deadline && new Date(newQuiz.submission_deadline) <= new Date(newQuiz.start_time) && (
+              <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
+                <p className="text-red-700 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5" />
+                  Deadline musi być późniejszy niż czas rozpoczęcia!
+                </p>
+              </div>
+            )}
 
             <div className="mt-8">
               <div className="flex items-center gap-3 mb-6">

@@ -83,6 +83,8 @@ export interface Quiz extends FirebaseDocument {
   max_attempts: number;
   time_limit?: number;
   passing_score?: number;
+  start_time?: string; // ISO string
+  submission_deadline?: string; // ISO string
 }
 
 export interface Question extends FirebaseDocument {

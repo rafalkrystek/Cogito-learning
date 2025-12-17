@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { collection, doc, getDocs, addDoc, updateDoc, query, where, orderBy, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -23,6 +23,46 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gradeAdded, setGradeAdded] = useState<{grade: number, description: string} | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+
+  // Timer sprawdzający deadline podczas rozwiązywania quizu
+  useEffect(() => {
+    if (!currentAttempt || !quiz) return;
+    
+    const deadline = (quiz as any).submission_deadline ? new Date((quiz as any).submission_deadline) : null;
+    const availableTimeMs = (currentAttempt as any).available_time_ms;
+    
+    if (!deadline && !availableTimeMs) return;
+    
+    const updateTimer = () => {
+      const now = new Date();
+      
+      if (deadline) {
+        const remaining = deadline.getTime() - now.getTime();
+        if (remaining <= 0) {
+          // Deadline minął - automatycznie zakończ quiz
+          submitQuiz();
+          return;
+        }
+        setTimeRemaining(remaining);
+      } else if (availableTimeMs) {
+        const startedAt = new Date(currentAttempt.started_at);
+        const elapsed = now.getTime() - startedAt.getTime();
+        const remaining = availableTimeMs - elapsed;
+        if (remaining <= 0) {
+          // Czas minął - automatycznie zakończ quiz
+          submitQuiz();
+          return;
+        }
+        setTimeRemaining(remaining);
+      }
+    };
+    
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000); // Aktualizuj co sekundę
+    
+    return () => clearInterval(interval);
+  }, [currentAttempt, quiz]);
 
   useEffect(() => {
     if (!user || !quizId) return;
@@ -78,6 +118,31 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
     try {
       setIsSubmitting(true);
       
+      const now = new Date();
+      const deadline = (quiz as any).submission_deadline ? new Date((quiz as any).submission_deadline) : null;
+      const startTime = (quiz as any).start_time ? new Date((quiz as any).start_time) : null;
+      const timeLimit = (quiz as any).time_limit || 30; // w minutach
+      
+      // Sprawdź czy można rozpocząć
+      if (startTime && now < startTime) {
+        setError('Egzamin jeszcze nie jest dostępny');
+        setIsSubmitting(false);
+        return;
+      }
+      
+      if (deadline && now > deadline) {
+        setError('Czas na wykonanie egzaminu minął');
+        setIsSubmitting(false);
+        return;
+      }
+      
+      // Oblicz rzeczywisty czas dostępny (deadline vs time_limit)
+      let availableTimeMs = timeLimit * 60 * 1000; // czas w milisekundach
+      if (deadline) {
+        const timeUntilDeadline = deadline.getTime() - now.getTime();
+        availableTimeMs = Math.min(availableTimeMs, timeUntilDeadline);
+      }
+      
       const attemptNumber = attempts.length + 1;
       
       const newAttempt: any = {
@@ -89,7 +154,9 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
         attempt_number: attemptNumber,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
-        created_by: user.uid
+        created_by: user.uid,
+        available_time_ms: availableTimeMs, // Zapisz dostępny czas
+        deadline: deadline ? deadline.toISOString() : null
       };
       
       const docRef = await addDoc(collection(db, 'quiz_attempts'), newAttempt);
@@ -170,6 +237,14 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
     
     try {
       setIsSubmitting(true);
+      
+      // Sprawdź deadline
+      const deadline = (quiz as any).submission_deadline ? new Date((quiz as any).submission_deadline) : null;
+      const now = new Date();
+      if (deadline && now > deadline) {
+        setError('Czas na wykonanie egzaminu minął. Quiz został automatycznie zakończony.');
+        // Automatycznie zapisz odpowiedzi, które uczeń zdążył udzielić
+      }
       
       // Oblicz wynik
       let correctAnswers = 0;
@@ -314,6 +389,46 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
   const currentQuestion = quiz.questions[currentQuestionIndex];
   const allQuestionsAnswered = quiz.questions.every(q => selectedAnswers[q.id]);
 
+  // Logika czasowa
+  const getQuizTimeStatus = () => {
+    const now = new Date();
+    const startTime = (quiz as any).start_time ? new Date((quiz as any).start_time) : null;
+    const deadline = (quiz as any).submission_deadline ? new Date((quiz as any).submission_deadline) : null;
+
+    // Jeśli nie ma deadline, quiz jest zawsze dostępny
+    if (!deadline) {
+      return { status: 'available', message: null };
+    }
+
+    // Jeśli jest start_time i jeszcze nie minął
+    if (startTime && now < startTime) {
+      return {
+        status: 'before',
+        message: `Egzamin dostępny od: ${startTime.toLocaleString('pl-PL', { 
+          day: '2-digit', 
+          month: '2-digit', 
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })}`
+      };
+    }
+
+    // Jeśli deadline minął
+    if (now > deadline) {
+      return {
+        status: 'after',
+        message: 'Czas na wykonanie egzaminu minął'
+      };
+    }
+
+    // W trakcie okna czasowego
+    return { status: 'available', message: null };
+  };
+
+  const timeStatus = getQuizTimeStatus();
+  const isTimeBlocked = timeStatus.status === 'before' || timeStatus.status === 'after';
+
   // Jeśli użytkownik nie może rozpocząć nowej próby
   if (!canStartNewAttempt && !currentAttempt) {
     return (
@@ -389,7 +504,26 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
           
           <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-6">
             <h2 className="text-3xl font-bold text-gray-800 mb-2">{quiz.title}</h2>
-            <p className="text-gray-600 mb-6">{quiz.description}</p>
+            {/* Opis zawsze widoczny */}
+            {quiz.description && (
+              <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-gray-700 whitespace-pre-wrap">{quiz.description}</p>
+              </div>
+            )}
+            
+            {/* Komunikaty czasowe */}
+            {timeStatus.message && (
+              <div className={`mb-6 p-4 rounded-lg border ${
+                timeStatus.status === 'before' 
+                  ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                <p className="font-semibold flex items-center gap-2">
+                  {timeStatus.status === 'before' ? '⏰' : '❌'}
+                  {timeStatus.message}
+                </p>
+              </div>
+            )}
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="bg-blue-50 rounded-lg p-4">
@@ -437,11 +571,14 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
             <div className="text-center">
               <button
                 onClick={startNewAttempt}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canStartNewAttempt || isTimeBlocked}
                 className="px-8 py-3 bg-[#4067EC] text-white rounded-lg font-semibold hover:bg-[#3050b3] transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isSubmitting ? 'Rozpoczynanie...' : 'Rozpocznij quiz'}
+                {isSubmitting ? 'Rozpoczynanie...' : 'Rozpocznij Quiz'}
               </button>
+              {!canStartNewAttempt && (
+                <p className="mt-2 text-sm text-gray-500">Wykorzystałeś wszystkie dostępne próby</p>
+              )}
             </div>
           </div>
         </div>
@@ -450,6 +587,13 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
   }
 
   // Aktywny quiz
+  const formatTimeRemaining = (ms: number | null) => {
+    if (ms === null) return null;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="min-h-screen bg-[#F4F6FB] p-4">
       <div className="max-w-4xl mx-auto">
@@ -465,6 +609,13 @@ export const FirebaseQuizDisplay: React.FC<FirebaseQuizDisplayProps> = ({ quizId
               <div className="text-sm text-gray-500">
                 Rozpoczęto: {new Date(currentAttempt.started_at).toLocaleTimeString('pl-PL')}
               </div>
+              {timeRemaining !== null && (
+                <div className={`text-sm font-semibold mt-1 ${
+                  timeRemaining < 60000 ? 'text-red-600' : timeRemaining < 300000 ? 'text-orange-600' : 'text-green-600'
+                }`}>
+                  ⏱️ Pozostało: {formatTimeRemaining(timeRemaining)}
+                </div>
+              )}
             </div>
           </div>
           

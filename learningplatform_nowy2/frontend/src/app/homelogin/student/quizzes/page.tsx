@@ -260,11 +260,52 @@ function StudentQuizzesPageContent() {
                 ? Math.max(...completedAttempts.map(attempt => attempt.score || 0))
                 : null;
 
+              // Logika czasowa
+              const now = new Date();
+              const startTime = (quiz as any).start_time ? new Date((quiz as any).start_time) : null;
+              const deadline = (quiz as any).submission_deadline ? new Date((quiz as any).submission_deadline) : null;
+              
+              let timeStatus: 'before' | 'available' | 'after' = 'available';
+              let timeMessage: string | null = null;
+              
+              if (deadline) {
+                if (startTime && now < startTime) {
+                  timeStatus = 'before';
+                  timeMessage = `Dostępny od: ${startTime.toLocaleString('pl-PL', { 
+                    day: '2-digit', 
+                    month: '2-digit', 
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}`;
+                } else if (now > deadline) {
+                  timeStatus = 'after';
+                  timeMessage = 'Czas minął';
+                }
+              }
+              
+              const isTimeBlocked = timeStatus === 'before' || timeStatus === 'after';
+              const isButtonDisabled = !canStartNewAttempt || isTimeBlocked;
+
               return (
                 <div key={quiz.id} className="bg-[#F8F9FB] rounded-xl p-4 md:p-6 border border-gray-200 hover:border-[#4067EC] transition-colors">
                   <div className="mb-4">
                     <h3 className="text-lg md:text-xl font-semibold text-gray-800 mb-2">{quiz.title}</h3>
-                    <p className="text-gray-600 text-sm mb-3">{quiz.description}</p>
+                    {/* Opis zawsze widoczny */}
+                    {quiz.description && (
+                      <p className="text-gray-600 text-sm mb-3">{quiz.description}</p>
+                    )}
+                    
+                    {/* Komunikaty czasowe */}
+                    {timeMessage && (
+                      <div className={`mb-3 p-2 rounded-lg text-xs ${
+                        timeStatus === 'before' 
+                          ? 'bg-yellow-50 border border-yellow-200 text-yellow-800'
+                          : 'bg-red-50 border border-red-200 text-red-800'
+                      }`}>
+                        {timeStatus === 'before' ? '⏰' : '❌'} {timeMessage}
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2 mb-3">
                       <span className="px-2 py-1 bg-[#4067EC] text-white text-xs rounded-full">{quiz.subject}</span>
                       <span className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded-full">{quiz.course_title}</span>
@@ -304,14 +345,19 @@ function StudentQuizzesPageContent() {
                   
                   <button
                     onClick={() => setSelectedQuiz(quiz)}
-                    disabled={!canStartNewAttempt}
+                    disabled={isButtonDisabled}
                     className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-                      canStartNewAttempt
-                        ? 'bg-[#4067EC] text-white hover:bg-[#3050b3]'
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      isButtonDisabled
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : 'bg-[#4067EC] text-white hover:bg-[#3050b3]'
                     }`}
                   >
-                    {canStartNewAttempt ? 'Rozpocznij quiz' : 'Limit prób przekroczony'}
+                    {isTimeBlocked 
+                      ? (timeStatus === 'before' ? 'Niedostępny' : 'Czas minął')
+                      : !canStartNewAttempt 
+                        ? 'Limit prób przekroczony'
+                        : 'Rozpocznij Quiz'
+                    }
                   </button>
                 </div>
               );
