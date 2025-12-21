@@ -7,9 +7,9 @@ import { ArrowLeft, Calendar } from 'lucide-react';
 
 function SchedulePageContent() {
   return (
-    <div className="min-h-screen bg-slate-50 w-full overflow-x-hidden" style={{ maxWidth: '100vw' }}>
-      <div className="w-full bg-white border-b shadow-sm">
-        <div className="px-3 sm:px-6 py-3">
+    <div className="h-screen bg-slate-50 w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw', height: '100vh' }}>
+      <div className="w-full bg-white border-b shadow-sm flex-shrink-0">
+        <div className="px-3 sm:px-4 py-2">
           {/* Mobile */}
           <div className="flex items-center justify-between sm:hidden">
             <button onClick={() => window.location.href = '/homelogin'} className="p-2 bg-blue-600 text-white rounded-lg">
@@ -31,7 +31,7 @@ function SchedulePageContent() {
           </div>
         </div>
       </div>
-      <div className="p-3 sm:p-6">
+      <div className="flex-1 overflow-hidden" style={{ height: 'calc(100vh - 70px)', minHeight: 0 }}>
         <LessonSchedule />
       </div>
     </div>

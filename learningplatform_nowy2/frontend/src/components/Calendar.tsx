@@ -76,6 +76,11 @@ interface Event {
   students?: string[]; // For new assignment/exam events
   courseId?: string;
   sectionId?: string;
+  // 🆕 Pola używane przez plan lekcji klas (class_lesson)
+  classId?: string;
+  className?: string;
+  teacherId?: string;
+  teacherEmail?: string;
 }
 
 const Calendar: React.FC = () => {
@@ -83,6 +88,8 @@ const Calendar: React.FC = () => {
   const { user } = useAuth();
   const [editEvent, setEditEvent] = useState<Event | null>(null);
   const [students, setStudents] = useState<{uid: string, displayName: string}[]>([]);
+  // ID klas, które należą do zalogowanego nauczyciela (do filtrowania eventów w kalendarzu)
+  const [teacherClassIds, setTeacherClassIds] = useState<string[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
@@ -127,15 +134,33 @@ const Calendar: React.FC = () => {
       if (!user || !user.uid) return;
       
       try {
-        const classesQuery = query(
-          collection(db, 'classes'),
-          where('teacher_id', '==', user.uid)
-        );
-        const classesSnapshot = await getDocs(classesQuery);
-        const classesData = classesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as any))
-          .filter(cls => cls.is_active);
+        const classesRef = collection(db, 'classes');
+        const [byTeacherIdSnap, byTeacherEmailSnap] = await Promise.all([
+          getDocs(query(classesRef, where('teacher_id', '==', user.uid))),
+          user.email ? getDocs(query(classesRef, where('teacher_email', '==', user.email))) : Promise.resolve({ docs: [] } as any)
+        ]);
+
+        // Merge + dedupe po doc.id
+        const byId = new Map<string, any>();
+        [byTeacherIdSnap, byTeacherEmailSnap].forEach((snap: any) => {
+          snap.docs?.forEach((d: any) => byId.set(d.id, { id: d.id, ...d.data() }));
+        });
+
+        // ⚠️ Bezpieczne filtrowanie:
+        // - jeśli klasa ma teacher_id -> musi równać się user.uid
+        // - jeśli klasa NIE ma teacher_id -> dopiero wtedy dopuszczamy teacher_email
+        const classesData = Array.from(byId.values())
+          .filter((cls: any) => !!cls?.is_active)
+          .filter((cls: any) => {
+            const teacherId = String(cls?.teacher_id || '').trim();
+            const teacherEmail = String(cls?.teacher_email || '').trim();
+            if (teacherId) return teacherId === String(user.uid).trim();
+            if (teacherEmail && user.email) return teacherEmail === String(user.email).trim();
+            return false;
+          });
+
         setAvailableClasses(classesData);
+        setTeacherClassIds(classesData.map((c: any) => c.id).filter(Boolean));
       } catch (error) {
         console.error('Error fetching classes:', error);
       }
@@ -189,16 +214,42 @@ const Calendar: React.FC = () => {
       return [];
     }
     
-    // nauczyciel/admin widzą wszystko
-    if (user.role === 'teacher' || user.role === 'admin') {
-      console.log('Teacher/admin - showing all events');
+    // Admin widzi wszystko
+    if (user.role === 'admin') {
+      console.log('Admin - showing all events');
       return events;
+    }
+
+    // Nauczyciel widzi TYLKO:
+    // - eventy stworzone przez siebie (createdBy == uid/email)
+    // - ewentualnie eventy jawnie oznaczone teacherId/teacherEmail
+    // ❗ Nie pokazujemy `class_lesson` (planów klas) dla nauczyciela, bo to powoduje wyświetlanie planu klasy uczniów
+    // przypisanych do nauczyciela/tutora.
+    if (user.role === 'teacher') {
+      const classIdSet = new Set(teacherClassIds);
+      const filtered = events.filter((event: any) => {
+        const createdBy = event.createdBy;
+        const createdByMatches = createdBy && (createdBy === user.uid || createdBy === user.email);
+
+        const teacherId = event.teacherId || event.teacher_id;
+        const teacherEmail = event.teacherEmail || event.teacher_email;
+        const teacherMatches =
+          (teacherId && teacherId === user.uid) ||
+          (teacherEmail && user.email && teacherEmail === user.email);
+
+        if (event.type === 'class_lesson') return false;
+
+        return createdByMatches || teacherMatches;
+      });
+
+      console.log('Filtered events for teacher:', { total: events.length, filtered: filtered.length, teacherClassIds: teacherClassIds.length });
+      return filtered;
     }
     
     // Dla innych ról - nie pokazuj nic
     console.log('Unknown role - showing no events');
     return [];
-  }, [events, user]);
+  }, [events, user, teacherClassIds]);
 
   const calendarEvents = filteredEvents.map(event => {
     // Dla nowych eventów z zadaniami/egzaminami (deadline)

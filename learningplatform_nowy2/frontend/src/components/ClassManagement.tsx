@@ -54,7 +54,8 @@ export default function ClassManagement({ onClose }: ClassManagementProps) {
       if (user?.role === 'admin') {
         setClasses(classesData.filter(c => c.is_active));
       } else if (user?.role === 'teacher') {
-        setClasses(classesData.filter(c => c.teacher_id === user.uid && c.is_active));
+        // Nauczyciele widzą wszystkie klasy (wszyscy nauczyciele mogą widzieć wszystkie klasy)
+        setClasses(classesData.filter(c => c.is_active));
       } else {
         setClasses(classesData.filter(c => c.students?.includes(user?.uid || '') && c.is_active));
       }

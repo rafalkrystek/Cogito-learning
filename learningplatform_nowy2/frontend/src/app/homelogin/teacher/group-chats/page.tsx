@@ -229,7 +229,7 @@ export default function GroupChatsPage() {
 
         // Fetch classes and courses in parallel
         const [classesSnapshot, createdBySnapshot, teacherEmailSnapshot] = await Promise.all([
-          getDocs(query(collection(db, 'classes'), where('teacher_id', '==', user.uid), limit(50))),
+          getDocs(query(collection(db, 'classes'), where('is_active', '==', true), limit(50))),
           getDocs(query(collection(db, 'courses'), where('created_by', '==', user.email), limit(100))),
           getDocs(query(collection(db, 'courses'), where('teacherEmail', '==', user.email), limit(100)))
         ]);

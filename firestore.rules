@@ -149,24 +149,28 @@ service cloud.firestore {
     }
 
     // 13. KLASY
+    // Nauczyciele widzą wszystkie klasy (wszyscy nauczyciele mogą widzieć wszystkie klasy)
     match /classes/{classId} {
+      // Wszyscy zalogowani mogą czytać klasy
       allow read: if isSignedIn();
       
+      // Nauczyciele i admini mogą tworzyć klasy
       allow create: if isSignedIn() && (
         request.resource.data.teacher_id == request.auth.uid ||
         isTeacher() || 
         isAdmin()
       );
       
+      // Nauczyciele mogą edytować wszystkie klasy (nie tylko swoje)
       allow update: if isSignedIn() && (
-        resource.data.teacher_id == request.auth.uid ||
         isAdmin() ||
-        (isTeacher() && (resource.data.teacher_id == '' || resource.data.teacher_id == null))
+        isTeacher()
       );
       
+      // Nauczyciele mogą usuwać wszystkie klasy (nie tylko swoje)
       allow delete: if isSignedIn() && (
-        resource.data.teacher_id == request.auth.uid ||
-        isAdmin()
+        isAdmin() ||
+        isTeacher()
       );
     }
 

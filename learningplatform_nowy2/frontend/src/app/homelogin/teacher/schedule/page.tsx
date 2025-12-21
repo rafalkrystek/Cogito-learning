@@ -164,8 +164,11 @@ export default function TeacherSchedule() {
     
     try {
       await measureAsync('TeacherSchedule:fetchClasses', async () => {
-        // Check cache
-        const cacheKey = `teacher_schedule_classes_${user.uid || user.email}`;
+        const isAdmin = user?.role === 'admin' || user?.role === 'administrator';
+        // Cache per-użytkownik (żeby nie mieszać klas między nauczycielami)
+        const cacheKey = isAdmin
+          ? `teacher_schedule_classes_all`
+          : `teacher_schedule_classes_${user.uid}`;
         const cached = getSessionCache<Class[]>(cacheKey);
         
         if (cached) {
@@ -173,29 +176,40 @@ export default function TeacherSchedule() {
           return;
         }
 
-        // Fetch classes with where clause if teacher_id or teacher_email exists
-        let classesQuery;
-        if (user.uid) {
-          classesQuery = query(
-            collection(db, 'classes'),
-            where('teacher_id', '==', user.uid),
-            limit(50)
-          );
-        } else if (user.email) {
-          classesQuery = query(
-            collection(db, 'classes'),
-            where('teacher_email', '==', user.email),
-            limit(50)
-          );
-        } else {
-          classesQuery = query(collection(db, 'classes'), limit(50));
-        }
+        // Nauczyciel: tylko swoje klasy (po teacher_id / teacher_email).
+        // Admin: wszystkie aktywne klasy.
+        const classesRef = collection(db, 'classes');
+        const snapshots = await (async () => {
+          if (isAdmin) {
+            return [await getDocs(query(classesRef, where('is_active', '==', true), limit(50)))];
+          }
+          const byTeacherId = user?.uid
+            ? getDocs(query(classesRef, where('teacher_id', '==', user.uid), where('is_active', '==', true), limit(50)))
+            : Promise.resolve({ docs: [] } as any);
+          const byTeacherEmail = user?.email
+            ? getDocs(query(classesRef, where('teacher_email', '==', user.email), where('is_active', '==', true), limit(50)))
+            : Promise.resolve({ docs: [] } as any);
+          return await Promise.all([byTeacherId, byTeacherEmail]);
+        })();
 
-        const classesSnapshot = await getDocs(classesQuery);
-        
-        const classesData = classesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as Class))
-          .filter(cls => cls.name && cls.is_active !== false);
+        // Merge + dedupe po doc.id
+        const byId = new Map<string, Class>();
+        snapshots.forEach((snap: any) => {
+          snap.docs?.forEach((docSnap: any) => {
+            byId.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as Class);
+          });
+        });
+        // ⚠️ Bezpieczne filtrowanie:
+        // - jeśli klasa ma teacher_id -> musi równać się user.uid
+        // - jeśli klasa NIE ma teacher_id -> dopiero wtedy dopuszczamy teacher_email
+        const classesData = Array.from(byId.values()).filter((cls: any) => {
+          if (!cls?.name || cls?.is_active === false) return false;
+          const teacherId = String((cls as any)?.teacher_id || '').trim();
+          const teacherEmail = String((cls as any)?.teacher_email || '').trim();
+          if (teacherId) return teacherId === String(user?.uid || '').trim();
+          if (teacherEmail && user?.email) return teacherEmail === String(user.email).trim();
+          return false;
+        });
         
         setClasses(classesData);
         setSessionCache(cacheKey, classesData);
@@ -203,7 +217,7 @@ export default function TeacherSchedule() {
     } catch {
       // Ignore
     }
-  }, [user?.uid, user?.email]);
+  }, [user?.uid, user?.email, user?.role]);
 
   const fetchLessons = useCallback(async () => {
     try {
@@ -297,11 +311,11 @@ export default function TeacherSchedule() {
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case 'lecture': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'lab': return 'bg-green-100 text-green-800 border-green-200';
-      case 'seminar': return 'bg-purple-100 text-purple-800 border-purple-200';
-      case 'exam': return 'bg-red-100 text-red-800 border-red-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'lecture': return 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 border-blue-200 dark:border-blue-700';
+      case 'lab': return 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 border-green-200 dark:border-green-700';
+      case 'seminar': return 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-100 border-purple-200 dark:border-purple-700';
+      case 'exam': return 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100 border-red-200 dark:border-red-700';
+      default: return 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 border-gray-200 dark:border-gray-700';
     }
   };
 
@@ -389,10 +403,10 @@ export default function TeacherSchedule() {
   }
 
   return (
-    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 w-full max-w-full overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
       <div className="flex-1 flex flex-col min-h-0 px-6 py-4">
         {/* Header - Fixed */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 mb-4 shadow-xl flex-shrink-0">
+        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-white/30 dark:border-gray-700/30 p-6 mb-4 shadow-xl flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -402,7 +416,7 @@ export default function TeacherSchedule() {
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                   Plan Lekcji
                 </h1>
-                <p className="text-gray-600 mt-1">Zarządzaj swoim planem lekcji i harmonogramem</p>
+                <p className="text-gray-600 dark:text-gray-300 mt-1">Zarządzaj swoim planem lekcji i harmonogramem</p>
               </div>
             </div>
             
@@ -417,7 +431,7 @@ export default function TeacherSchedule() {
         </div>
 
         {/* Controls - Fixed */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 mb-4 shadow-lg flex-shrink-0">
+        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-white/30 dark:border-gray-700/30 p-6 mb-4 shadow-lg flex-shrink-0">
           <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
             {/* Week Navigation */}
             <div className="flex items-center gap-4">
@@ -430,16 +444,16 @@ export default function TeacherSchedule() {
                     setCurrentWeek(52);
                   }
                 }}
-                className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="p-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors text-gray-700 dark:text-gray-200"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
               
               <div className="text-center">
-                <div className="text-lg font-semibold text-gray-700">
+                <div className="text-lg font-semibold text-gray-700 dark:text-gray-200">
                   Tydzień {currentWeek} - {currentYear}
                 </div>
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
                   {(() => {
                     const weekDates = getWeekDates(currentWeek, currentYear);
                     return `${formatDate(weekDates.start)} - ${formatDate(weekDates.end)}`;
@@ -456,7 +470,7 @@ export default function TeacherSchedule() {
                     setCurrentWeek(1);
                   }
                 }}
-                className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="p-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors text-gray-700 dark:text-gray-200"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
@@ -470,7 +484,7 @@ export default function TeacherSchedule() {
                   setCurrentYear(currentYearNow);
                   setCurrentWeek(currentWeekNow);
                 }}
-                className="px-3 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                className="px-3 py-2 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors text-sm font-medium"
               >
                 Dzisiaj
               </button>
@@ -485,14 +499,14 @@ export default function TeacherSchedule() {
                   placeholder="Szukaj lekcji..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all w-full sm:w-64"
+                  className="pl-10 pr-4 py-2 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 transition-all w-full sm:w-64"
                 />
               </div>
               
               <select
                 value={filterDay}
                 onChange={(e) => setFilterDay(e.target.value)}
-                className="px-4 py-2 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                className="px-4 py-2 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 transition-all"
               >
                 <option value="all">Wszystkie dni</option>
                 {days.map(day => (
@@ -503,7 +517,7 @@ export default function TeacherSchedule() {
               <select
                 value={filterClass}
                 onChange={(e) => setFilterClass(e.target.value)}
-                className="px-4 py-2 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                className="px-4 py-2 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 transition-all"
               >
                 <option value="all">Wszystkie klasy</option>
                 {classes.map(cls => (
@@ -515,36 +529,36 @@ export default function TeacherSchedule() {
         </div>
 
         {/* Schedule Grid - Scrollable */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/30 p-6 shadow-lg flex-1 overflow-y-auto min-h-0">
+        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl border border-white/30 dark:border-gray-700/30 p-6 shadow-lg flex-1 overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 lg:grid-cols-7 gap-4">
             {days.map(day => {
               const dayLessons = getLessonsForDay(day.key);
               return (
                 <div key={day.key} className="min-h-[600px]">
-                  <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 rounded-xl mb-4 text-center">
+                  <div className="bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700 text-white p-4 rounded-xl mb-4 text-center shadow-md dark:shadow-lg">
                     <h3 className="font-bold text-lg">{day.short}</h3>
                     <p className="text-sm opacity-90">{dayLessons.length} lekcji</p>
                   </div>
                   
                   <div className="space-y-3">
                     {dayLessons.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Calendar className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                        <Calendar className="h-12 w-12 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
                         <p>Brak lekcji</p>
                       </div>
                     ) : (
                       dayLessons.map(lesson => (
                         <div
                           key={lesson.id}
-                          className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300 cursor-pointer group"
+                          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 hover:shadow-lg dark:hover:shadow-xl transition-all duration-300 cursor-pointer group"
                           onClick={() => openEditModal(lesson)}
                         >
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex-1">
-                              <h4 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+                              <h4 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                 {lesson.title}
                               </h4>
-                              <p className="text-sm text-gray-600">{lesson.class}</p>
+                              <p className="text-sm text-gray-600 dark:text-gray-300">{lesson.class}</p>
                             </div>
                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
@@ -569,12 +583,12 @@ export default function TeacherSchedule() {
                           </div>
                           
                           <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
                               <Clock className="h-4 w-4" />
                               <span>{lesson.startTime} - {lesson.endTime}</span>
                             </div>
                             
-                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
                               <MapPin className="h-4 w-4" />
                               <span>{lesson.room}</span>
                             </div>

@@ -109,8 +109,8 @@ export default function StudentsPage() {
         .map(doc => ({ id: doc.id, ...doc.data() } as Class))
         .filter(cls => {
           const isActive = cls.is_active !== false; // Domyślnie true jeśli nie ustawione
-          const isTeacherClass = cls.teacher_id === user.uid; // Sprawdź tylko teacher_id
-          return isActive && isTeacherClass;
+          // Nauczyciele widzą wszystkie klasy (wszyscy nauczyciele mogą widzieć wszystkie klasy)
+          return isActive;
         });
       
       setClasses(classesData);
@@ -566,8 +566,8 @@ export default function StudentsPage() {
         <div className="px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <button
-              onClick={() => window.location.href = '/homelogin'}
-              className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
+              onClick={() => router.push('/homelogin/teacher')}
+              className="md:hidden flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
             >
               <ArrowLeft className="w-5 h-5" />
               <span className="hidden sm:inline">Powrót</span>

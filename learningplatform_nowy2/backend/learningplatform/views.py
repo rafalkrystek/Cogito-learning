@@ -1168,8 +1168,8 @@ def get_classes(request):
             # Admin widzi wszystkie klasy
             classes_ref = db.collection('classes').where('is_active', '==', True)
         elif request.user.is_teacher:
-            # Nauczyciel widzi swoje klasy
-            classes_ref = db.collection('classes').where('teacher_id', '==', user_id).where('is_active', '==', True)
+            # Nauczyciele widzą wszystkie klasy (wszyscy nauczyciele mogą widzieć wszystkie klasy)
+            classes_ref = db.collection('classes').where('is_active', '==', True)
         else:
             # Student widzi klasy do których jest przypisany
             classes_ref = db.collection('classes').where('students', 'array_contains', user_id).where('is_active', '==', True)

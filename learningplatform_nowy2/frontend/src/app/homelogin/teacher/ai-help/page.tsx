@@ -67,14 +67,14 @@ export default function AIHelpPage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
-            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
+            className="md:hidden flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
             <span className="hidden sm:inline">Powrót</span>
           </button>
 
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Pomoc AI
+            AI
           </h1>
 
           <div className="w-20"></div>
@@ -84,10 +84,9 @@ export default function AIHelpPage() {
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6 min-h-0">
         <div className="space-y-6 flex-1 flex flex-col min-h-0">
-          {/* Header - Fixed */}
+          {/* Header - Fixed (uprościliśmy – bez dodatkowych opisów) */}
           <div className="flex-shrink-0">
-            <h2 className="text-2xl font-bold text-gray-900">Pomoc AI</h2>
-            <p className="text-gray-600">Asystent AI dla nauczycieli</p>
+            <h2 className="text-2xl font-bold text-gray-900">AI</h2>
           </div>
 
       {/* Main Chat Interface - Scrollable */}

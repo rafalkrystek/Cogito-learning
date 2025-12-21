@@ -21,14 +21,14 @@ export default function TeacherCalendarPage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => window.location.href = '/homelogin'}
-            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
+            className="md:hidden flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
             <span className="hidden sm:inline">Powrót</span>
           </button>
 
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Kalendarz i Aktywności
+            Kalendarz
           </h1>
 
           <div className="w-20"></div>
@@ -37,11 +37,10 @@ export default function TeacherCalendarPage() {
 
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Header */}
+        {/* Header (uprościliśmy – bez dodatkowych opisów) */}
         <header className="w-full bg-white/90 backdrop-blur-xl shadow-sm border-b border-white/20 flex items-center justify-between px-8 py-4 flex-shrink-0">
           <div>
-            <h2 className="text-2xl font-bold text-[#4067EC]">Kalendarz i Aktywności</h2>
-            <p className="text-gray-600">Zarządzaj wydarzeniami i harmonogramem zajęć</p>
+            <h2 className="text-2xl font-bold text-[#4067EC]">Kalendarz</h2>
           </div>
         </header>
 

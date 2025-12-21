@@ -1,11 +1,20 @@
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 import firebase_admin
 from firebase_admin import credentials, auth
 from django.conf import settings
 
 # Load environment variables from .env file
-load_dotenv()
+# Try to load from backend directory explicitly (where this file is located)
+env_path = Path(__file__).parent.resolve() / '.env'
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+    print(f"[OK] Loaded .env from: {env_path}")
+else:
+    # Fallback: try loading from current directory (for manage.py)
+    load_dotenv(override=True)
+    print(f"[WARN] .env not found at {env_path}, trying current directory")
 
 # Required environment variables
 required_vars = [
@@ -19,7 +28,16 @@ required_vars = [
 # Check for missing environment variables
 missing = [var for var in required_vars if not os.getenv(var)]
 if missing:
-    raise Exception(f"Brakuje wymaganych zmiennych środowiskowych: {', '.join(missing)}")
+    # In development, allow the app to start without Firebase credentials
+    # Firebase features will be disabled until credentials are provided
+    is_production = os.getenv('RENDER') or os.getenv('RAILWAY_ENVIRONMENT')
+    if is_production:
+        raise Exception(f"Brakuje wymaganych zmiennych środowiskowych: {', '.join(missing)}")
+    else:
+        print(f"[WARN]  Development mode: Brakuje zmiennych środowiskowych Firebase: {', '.join(missing)}")
+        print("[WARN]  Aplikacja uruchomi się, ale funkcje Firebase będą wyłączone.")
+        print("[WARN]  Aby włączyć Firebase, utwórz plik .env z wymaganymi zmiennymi.")
+        print("[WARN]  Zobacz SETUP_FIREBASE.md dla instrukcji.")
 
 # Get Firebase credentials from environment variables
 private_key_id = os.getenv('FIREBASE_PRIVATE_KEY_ID')
@@ -27,6 +45,9 @@ private_key = os.getenv('FIREBASE_PRIVATE_KEY')
 client_email = os.getenv('FIREBASE_CLIENT_EMAIL')
 client_id = os.getenv('FIREBASE_CLIENT_ID')
 client_cert_url = os.getenv('FIREBASE_CLIENT_CERT_URL')
+
+# Check if we have all required variables before proceeding
+has_all_vars = all([private_key_id, private_key, client_email, client_id, client_cert_url])
 
 # Debug private key format (only first/last 50 chars for security)
 if private_key:
@@ -42,10 +63,10 @@ if private_key:
     print(f"Contains actual newlines: {'\n' in private_key}")
     print("==================================")
 else:
-    print("⚠️ FIREBASE_PRIVATE_KEY is not set in environment variables!")
+    print("[WARN] FIREBASE_PRIVATE_KEY is not set in environment variables!")
 
 # Initialize Firebase Admin SDK
-if not firebase_admin._apps:
+if not firebase_admin._apps and has_all_vars:
     try:
         # Process private key - handle different formats from hosting environments
         if private_key:
@@ -91,7 +112,7 @@ if not firebase_admin._apps:
             if not private_key.endswith('-----END PRIVATE KEY-----'):
                 raise ValueError(f"Private key does not end with END marker. Last 50 chars: {private_key[-50:]}")
             
-            print("✅ Private key processed successfully")
+            print("[OK] Private key processed successfully")
             print(f"Final key length: {len(private_key)}")
             print(f"Final key has newlines: {'\n' in private_key}")
         
@@ -111,34 +132,34 @@ if not firebase_admin._apps:
         # Try to initialize Firebase Admin SDK
         try:
             firebase_admin.initialize_app(cred)
-            print("✅ Firebase Admin SDK initialized successfully")
+            print("[OK] Firebase Admin SDK initialized successfully")
         except Exception as init_error:
             # If initialization fails, it might be due to JWT signature error
             error_str = str(init_error)
             if 'invalid_grant' in error_str or 'JWT' in error_str or 'signature' in error_str.lower():
-                print(f"❌ Firebase Admin SDK initialization failed with JWT Signature error: {error_str}")
-                print("⚠️ This is likely due to an invalid or expired FIREBASE_PRIVATE_KEY")
-                print("⚠️ The app will continue, but set_user_role will not work")
+                print(f"[ERROR] Firebase Admin SDK initialization failed with JWT Signature error: {error_str}")
+                print("[WARN] This is likely due to an invalid or expired FIREBASE_PRIVATE_KEY")
+                print("[WARN] The app will continue, but set_user_role will not work")
                 # Don't raise - allow app to continue
             else:
                 # Re-raise other errors
                 raise
     except ValueError as e:
         # Invalid key format - don't crash, but log the error
-        print(f"❌ Błąd formatu klucza prywatnego Firebase: {str(e)}")
-        print("⚠️ Sprawdź format FIREBASE_PRIVATE_KEY w zmiennych środowiskowych")
-        print("⚠️ Klucz powinien zawierać znaki nowej linii (\\n) lub być w formacie wieloliniowym")
+        print(f"[ERROR] Błąd formatu klucza prywatnego Firebase: {str(e)}")
+        print("[WARN] Sprawdź format FIREBASE_PRIVATE_KEY w zmiennych środowiskowych")
+        print("[WARN] Klucz powinien zawierać znaki nowej linii (\\n) lub być w formacie wieloliniowym")
         # Don't raise - allow app to continue, but set_user_role will fail gracefully
-        print("⚠️ Aplikacja będzie działać, ale ustawianie ról użytkowników może nie działać")
+        print("[WARN] Aplikacja będzie działać, ale ustawianie ról użytkowników może nie działać")
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Błąd inicjalizacji Firebase: {error_msg}")
+        print(f"[ERROR] Błąd inicjalizacji Firebase: {error_msg}")
         print(f"Error type: {type(e).__name__}")
         
         # Check if it's a JWT/credential error
         if 'invalid_grant' in error_msg or 'JWT' in error_msg or 'signature' in error_msg.lower():
-            print("⚠️ Błąd JWT Signature - problem z kluczem prywatnym Firebase")
-            print("⚠️ INSTRUKCJA NAPRAWY:")
+            print("[WARN] Błąd JWT Signature - problem z kluczem prywatnym Firebase")
+            print("[WARN] INSTRUKCJA NAPRAWY:")
             print("   1. Pobierz nowy klucz prywatny z Firebase Console")
             print("   2. W zmiennych środowiskowych hostingu ustaw FIREBASE_PRIVATE_KEY jako:")
             print("      - Wieloliniowy format (zalecane):")
@@ -149,36 +170,38 @@ if not firebase_admin._apps:
         import traceback
         traceback.print_exc()
         # Don't raise - allow app to continue, but log the error
-        print("⚠️ Aplikacja będzie działać, ale niektóre funkcje Firebase Admin mogą nie działać")
+        print("[WARN] Aplikacja będzie działać, ale niektóre funkcje Firebase Admin mogą nie działać")
+elif not has_all_vars:
+    print("[WARN] Firebase Admin SDK nie zostanie zainicjalizowany - brakuje zmiennych środowiskowych")
 
 def set_user_role(uid, role):
     """Set custom claims for a user to define their role."""
     try:
         # Verify that Firebase Admin is initialized
         if not firebase_admin._apps:
-            print("⚠️ Firebase Admin SDK not initialized, cannot set user role")
+            print("[WARN] Firebase Admin SDK not initialized, cannot set user role")
             return False
         
         # Check if user exists
         try:
             user = auth.get_user(uid)
-            print(f"✅ User {uid} exists, setting role {role}")
+            print(f"[OK] User {uid} exists, setting role {role}")
         except Exception as e:
-            print(f"⚠️ User {uid} does not exist in Firebase Auth: {str(e)}")
+            print(f"[WARN] User {uid} does not exist in Firebase Auth: {str(e)}")
             return False
         
         # Set custom claims
         try:
             auth.set_custom_user_claims(uid, {'role': role})
-            print(f"✅ Set role {role} for UID {uid}")
+            print(f"[OK] Set role {role} for UID {uid}")
             return True
         except Exception as claims_error:
             error_str = str(claims_error)
             # Check if it's a JWT signature error during claims setting
             if 'invalid_grant' in error_str or 'Invalid JWT Signature' in error_str or 'JWT' in error_str:
-                print(f"❌ JWT Signature error while setting custom claims: {error_str}")
-                print("⚠️ This indicates the FIREBASE_PRIVATE_KEY is invalid or expired")
-                print("⚠️ Solution: Generate a new private key in Firebase Console and update FIREBASE_PRIVATE_KEY in hosting environment variables")
+                print(f"[ERROR] JWT Signature error while setting custom claims: {error_str}")
+                print("[WARN] This indicates the FIREBASE_PRIVATE_KEY is invalid or expired")
+                print("[WARN] Solution: Generate a new private key in Firebase Console and update FIREBASE_PRIVATE_KEY in hosting environment variables")
                 # Don't raise - return False to indicate failure
                 return False
             else:
@@ -186,23 +209,23 @@ def set_user_role(uid, role):
                 raise
     except ValueError as e:
         # Invalid UID format
-        print(f"❌ Invalid UID format: {str(e)}")
+        print(f"[ERROR] Invalid UID format: {str(e)}")
         return False
     except firebase_admin.exceptions.NotFoundError as e:
         # User not found
-        print(f"❌ User {uid} not found: {str(e)}")
+        print(f"[ERROR] User {uid} not found: {str(e)}")
         return False
     except Exception as e:
         error_str = str(e)
-        print(f"❌ Error setting user role: {error_str}")
+        print(f"[ERROR] Error setting user role: {error_str}")
         print(f"Error type: {type(e).__name__}")
         
         # Check if it's a JWT signature error
         if 'invalid_grant' in error_str or 'Invalid JWT Signature' in error_str:
-            print("⚠️ JWT Signature error - this may indicate a problem with Firebase credentials")
-            print("⚠️ Check FIREBASE_PRIVATE_KEY format in environment variables")
-            print("ℹ️ NOTE: This error does NOT block calendar event creation (events are created directly in Firestore)")
-            print("ℹ️ NOTE: This only affects setting user roles during login - app will continue to work")
+            print("[WARN] JWT Signature error - this may indicate a problem with Firebase credentials")
+            print("[WARN] Check FIREBASE_PRIVATE_KEY format in environment variables")
+            print("[INFO] NOTE: This error does NOT block calendar event creation (events are created directly in Firestore)")
+            print("[INFO] NOTE: This only affects setting user roles during login - app will continue to work")
         
         # Only print full traceback in debug mode, otherwise just log the error
         import os
@@ -220,19 +243,19 @@ def get_firestore_client():
     try:
         # Check if Firebase Admin SDK is initialized
         if not firebase_admin._apps:
-            print("⚠️ Firebase Admin SDK not initialized, cannot get Firestore client")
-            print("⚠️ This usually means FIREBASE_PRIVATE_KEY is invalid or missing")
+            print("[WARN] Firebase Admin SDK not initialized, cannot get Firestore client")
+            print("[WARN] This usually means FIREBASE_PRIVATE_KEY is invalid or missing")
             return None
         
         from firebase_admin import firestore
         return firestore.client()
     except Exception as e:
         error_str = str(e)
-        print(f"❌ Error getting Firestore client: {error_str}")
+        print(f"[ERROR] Error getting Firestore client: {error_str}")
         
         if 'invalid_grant' in error_str or 'JWT' in error_str or 'signature' in error_str.lower():
-            print("⚠️ JWT Signature error - FIREBASE_PRIVATE_KEY is invalid or expired")
-            print("⚠️ Solution: Generate a new private key in Firebase Console and update FIREBASE_PRIVATE_KEY")
+            print("[WARN] JWT Signature error - FIREBASE_PRIVATE_KEY is invalid or expired")
+            print("[WARN] Solution: Generate a new private key in Firebase Console and update FIREBASE_PRIVATE_KEY")
         
         return None
 

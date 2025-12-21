@@ -727,7 +727,7 @@ export default function QuizManagementPage() {
               <div className="flex items-center space-x-4">
                 <button
                   onClick={handleBackClick}
-                  className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
+                  className="md:hidden flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
                 >
                   <ArrowLeft className="w-5 h-5" />
                   <span className="hidden sm:inline">Powrót</span>

@@ -2,8 +2,16 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+
+# Load .env from the same directory as manage.py
+BASE_DIR = Path(__file__).resolve().parent
+env_path = BASE_DIR / '.env'
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+else:
+    load_dotenv(override=True)
 
 
 def main():

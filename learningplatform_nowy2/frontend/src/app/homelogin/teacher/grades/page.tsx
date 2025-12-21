@@ -134,7 +134,7 @@ export default function TeacherGradesPage() {
       
       const classesQuery = query(
         collection(db, 'classes'),
-        where('teacher_id', '==', user.uid)
+        where('is_active', '==', true)
       );
       const classesSnapshot = await getDocs(classesQuery);
       
@@ -159,17 +159,54 @@ export default function TeacherGradesPage() {
     try {
       console.log('👥 fetchStudents - Fetching students for teacher:', user.email);
       
-      // Zamiast pobierać wszystkich użytkowników, pobierz tylko studentów przypisanych do nauczyciela
+      // Pobierz wszystkich studentów przypisanych bezpośrednio do nauczyciela
       const usersRef = collection(db, 'users');
       const [byUidSnapshot, byEmailSnapshot] = await Promise.all([
         getDocs(query(usersRef, where('assignedToTeacher', '==', user.uid))),
         getDocs(query(usersRef, where('assignedToTeacher', '==', user.email)))
       ]);
       
-      const allUsers: UserData[] = [
+      const directStudents: UserData[] = [
         ...byUidSnapshot.docs.map(doc => ({ id: doc.id, uid: doc.id, ...doc.data() } as UserData)),
         ...byEmailSnapshot.docs.map(doc => ({ id: doc.id, uid: doc.id, ...doc.data() } as UserData)),
       ];
+      
+      // WAŻNE: Pobierz również uczniów z wszystkich klas (nauczyciele widzą wszystkie klasy)
+      const classesQuery = query(
+        collection(db, 'classes'),
+        where('is_active', '==', true)
+      );
+      const classesSnapshot = await getDocs(classesQuery);
+      
+      // Zbierz wszystkich studentów z klas
+      const classStudentIds = new Set<string>();
+      classesSnapshot.docs.forEach(classDoc => {
+        const classData = classDoc.data();
+        const students = classData.students || [];
+        students.forEach((studentId: string) => classStudentIds.add(studentId));
+      });
+      
+      console.log(`👥 Znaleziono ${classStudentIds.size} unikalnych studentów w klasach`);
+      
+      // Pobierz dane wszystkich studentów z klas
+      const allStudentIds = Array.from(classStudentIds);
+      const classStudentsData: UserData[] = [];
+      
+      if (allStudentIds.length > 0) {
+        // Pobierz wszystkich użytkowników i filtruj po studentIds
+        const allUsersSnapshot = await getDocs(usersRef);
+        allUsersSnapshot.docs.forEach(doc => {
+          if (allStudentIds.includes(doc.id)) {
+            const userData = doc.data();
+            if (userData.role === 'student') {
+              classStudentsData.push({ id: doc.id, uid: doc.id, ...userData } as UserData);
+            }
+          }
+        });
+      }
+      
+      // Połącz uczniów bezpośrednio przypisanych i z klas
+      const allUsers: UserData[] = [...directStudents, ...classStudentsData];
       
       // Dedup
       const usersMap = new Map<string, UserData>();
@@ -186,7 +223,7 @@ export default function TeacherGradesPage() {
           assignedToTeacher: userData.assignedToTeacher
         } as Student));
       
-      console.log('👥 fetchStudents - Teacher students:', teacherStudents.length);
+      console.log(`👥 fetchStudents - Teacher students: ${teacherStudents.length} (${directStudents.length} bezpośrednio, ${classStudentsData.length} z klas)`);
       
       setStudents(teacherStudents);
       
@@ -475,7 +512,7 @@ export default function TeacherGradesPage() {
         <div className="flex items-center justify-between">
           <button
               onClick={() => router.push('/homelogin/teacher')}
-            className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
+            className="md:hidden flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 ease-in-out font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
             <span className="hidden sm:inline">Powrót</span>
