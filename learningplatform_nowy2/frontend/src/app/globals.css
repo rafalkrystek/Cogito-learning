@@ -1840,3 +1840,9 @@ div[class*='_popupContainer_']:has(div[class*='_popup_']) {
 .dark .fixed.inset-0 [class*="text-gray-500"] {
   color: var(--text-secondary) !important;
 }
+
+/* Next.js Portal positioning adjustments */
+nextjs-portal {
+  left: 2px !important;
+  top: -2px !important;
+}

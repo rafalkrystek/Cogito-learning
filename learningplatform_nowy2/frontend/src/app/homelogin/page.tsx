@@ -196,6 +196,7 @@ function Dashboard() {
   // Get sidebar links based on user role
   const sidebarLinks = getSidebarLinks(user?.role);
   const [sidebarOpen, setSidebarOpen] = useState(false); // Changed to false for mobile
+  const [sidebarDesktopVisible, setSidebarDesktopVisible] = useState(true); // Desktop sidebar visibility
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [showSearchResults, setShowSearchResults] = useState(false);
@@ -1077,7 +1078,7 @@ function Dashboard() {
         </button>
 
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed inset-y-0 left-0 z-40 w-64 bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-r border-white/20 dark:border-gray-700/50 flex flex-col h-screen transition-transform duration-300 ease-in-out shadow-xl`}>
+      <aside className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${sidebarDesktopVisible ? 'lg:translate-x-0' : 'lg:-translate-x-full'} fixed inset-y-0 left-0 z-40 w-64 bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-r border-white/20 dark:border-gray-700/50 flex flex-col h-screen transition-transform duration-300 ease-in-out shadow-xl`}>
         <div className="flex items-center gap-3 px-6 py-6 justify-between bg-gradient-to-r from-[#4067EC] to-[#5577FF] text-white rounded-br-2xl flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
@@ -1117,6 +1118,23 @@ function Dashboard() {
             </div>
           ))}
         </nav>
+        {/* Desktop toggle button - positioned in the middle of sidebar height */}
+        <button
+          onClick={() => setSidebarDesktopVisible(!sidebarDesktopVisible)}
+          className="hidden lg:flex absolute top-1/2 right-0 transform translate-x-1/2 -translate-y-1/2 z-50 w-[25px] h-16 bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border border-white/20 dark:border-gray-700/50 rounded-r-xl shadow-lg hover:shadow-xl transition-all duration-200 items-center justify-center group hover:bg-white dark:hover:bg-gray-800"
+          style={{ left: '241px', top: '486px' }}
+          aria-label={sidebarDesktopVisible ? "Ukryj menu" : "Pokaż menu"}
+        >
+          <svg 
+            className={`w-5 h-5 text-[#4067EC] dark:text-blue-400 transition-transform duration-200 ${sidebarDesktopVisible ? '' : 'rotate-180'}`}
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2" 
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
       </aside>
 
       {/* Overlay for mobile */}
@@ -1128,9 +1146,9 @@ function Dashboard() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col w-full lg:ml-64 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-200 min-h-screen">
+      <main className={`flex-1 flex flex-col w-full ${sidebarDesktopVisible ? 'lg:ml-64' : 'lg:ml-0'} bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-all duration-300 min-h-screen`}>
         {/* Header */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 lg:px-8 py-4 sm:py-6 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-white/20 dark:border-gray-700/50 shadow-sm relative gap-3 sm:gap-4 transition-colors duration-200">
+        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 lg:px-8 py-4 sm:py-6 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg border-b border-white/20 dark:border-gray-700/50 shadow-sm relative gap-3 sm:gap-4 transition-colors duration-200 h-[88px]">
           <div className="relative w-full sm:w-[45%] md:w-[40%] lg:w-1/3 pl-12 sm:pl-0" ref={searchRef}>
             <div className="flex">
               <input
@@ -1471,3 +1489,10 @@ function Dashboard() {
     </>
   );
 }
+
+
+
+
+
+
+

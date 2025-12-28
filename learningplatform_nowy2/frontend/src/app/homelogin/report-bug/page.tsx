@@ -223,8 +223,8 @@ export default function ReportBugPage() {
       <main className="pt-20 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
         <div className="max-w-5xl mx-auto">
           {/* Welcome Header */}
-          <div className="mb-8">
-            <div className="bg-gradient-to-r from-red-50 via-orange-50 to-yellow-50 dark:from-red-600/20 dark:via-orange-600/20 dark:to-yellow-600/20 backdrop-blur-xl rounded-3xl p-6 sm:p-8 lg:p-10 border border-gray-200 dark:border-white/20 shadow-2xl">
+          <div className="mb-8 mt-[80px]">
+            <div className="bg-gradient-to-r from-red-50 via-orange-50 to-yellow-50 dark:from-red-600/20 dark:via-orange-600/20 dark:to-yellow-600/20 backdrop-blur-xl rounded-3xl p-6 sm:p-8 lg:p-10 border border-gray-200 dark:border-white/20 shadow-2xl" style={{ width: '1047px' }}>
               <div className="flex items-center justify-between flex-wrap gap-4">
                 <div className="flex items-center gap-4">
                   <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-100 dark:bg-red-500/30 rounded-2xl flex items-center justify-center shadow-lg">
@@ -244,7 +244,7 @@ export default function ReportBugPage() {
           </div>
 
           {/* Form Card */}
-          <div className="bg-white dark:bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-6 sm:p-8 lg:p-10 border border-gray-200 dark:border-white/20">
+          <div className="bg-white dark:bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-6 sm:p-8 lg:p-10 border border-gray-200 dark:border-white/20 mt-[80px]" style={{ position: 'absolute', top: '260px' }}>
             {/* Info Box */}
             <div className="bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-500/10 dark:to-yellow-500/10 border border-orange-200 dark:border-orange-500/30 rounded-2xl p-5 sm:p-6 mb-8">
               <div className="flex items-start gap-4">
