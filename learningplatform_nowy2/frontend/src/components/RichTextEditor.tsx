@@ -10,6 +10,7 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  AlignJustify,
   Undo,
   Redo,
   Type,
@@ -175,6 +176,11 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       icon: AlignRight, 
       title: 'Wyrównaj do prawej', 
       action: () => execCommand('justifyRight'),
+    },
+    { 
+      icon: AlignJustify, 
+      title: 'Wyjustuj (wyrównaj do obu marginesów)', 
+      action: () => execCommand('justifyFull'),
     },
     { type: 'separator' },
     { 
